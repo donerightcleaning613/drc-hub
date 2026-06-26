@@ -258,7 +258,8 @@ async function sbLoadAll(){
   session = { role:prof.role, name:prof.full_name||user.email, id:user.id };
   state.me = { id:user.id, name:prof.full_name||user.email, initials:prof.initials||initialsOf(prof.full_name||user.email) };
 
-  let profs = isAdmin ? ((await sb.from('profiles').select('*').order('full_name')).data || []) : [prof];
+  // admins see the list of CONTRACTORS only (not other admins); contractors see just themselves
+  let profs = isAdmin ? ((await sb.from('profiles').select('*').eq('role','contractor').order('full_name')).data || []) : [prof];
   state.contractors = profs.map((p,i)=>({
     id:p.id, name:p.full_name||'Contractor', initials:p.initials||initialsOf(p.full_name),
     cls:CLS[i%CLS.length], zones:p.zones||[], status:p.status||'Active', avail:{}, template:{}
