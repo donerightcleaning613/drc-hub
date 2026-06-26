@@ -201,6 +201,7 @@ label:first-child{margin-top:0}
 <div class="toast" id="toast"></div>
 <div class="modal" id="modal"><div class="sheet" id="sheet"></div></div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 /* ============================================================
    ⚙️  CONFIG — edit these three values
@@ -211,8 +212,24 @@ const CONFIG = {
   SUPPORT_PHONE: "613-324-6779",        // management line for SMS button
   OFFICE_EMAIL: "contact@donerightcleaning.ca", // invoices are emailed here on submit
   GUIDE_VIDEO_FILE: "jobber-guide.mp4", // a video file kept next to this HTML (plays in-app)
-  GUIDE_VIDEO_URL: ""                   // OR paste a YouTube/Vimeo link instead
+  GUIDE_VIDEO_URL: "",                  // OR paste a YouTube/Vimeo link instead
+
+  // ===== SUPABASE (your live database + logins) =====
+  // 1) URL is already filled in for your project.
+  // 2) Paste your "anon public" key from Supabase → Project Settings → API.
+  //    When both are filled in, the app uses real logins + shared data.
+  //    If you leave the key blank, the app runs in offline demo mode.
+  SUPABASE_URL:      "https://bjcwudhhgwjbvnkwcnfr.supabase.co",
+  SUPABASE_ANON_KEY: "sb_publishable_dx0JsbuuiWZRCWt2QeYaNQ_xBNcJrfY"
 };
+
+/* ---------- Supabase client (online when configured) ---------- */
+const ONLINE = !!(window.supabase && CONFIG.SUPABASE_URL && CONFIG.SUPABASE_ANON_KEY
+                  && !CONFIG.SUPABASE_ANON_KEY.startsWith('PASTE_'));
+const sb = ONLINE ? window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY) : null;
+const CLS = ['','b','c','d','e'];
+function initialsOf(name){ return (name||'?').split(/\s+/).map(w=>w[0]).join('').slice(0,2).toUpperCase(); }
+const BOT_GREETING = "Hi 👋 I'm the DRC assistant. Ask me anything — pay, scheduling, extra assignments, or how to submit your weekly invoice. If I can't help, you can reach a real person.";
 
 /* ---------- storage helpers (persist on this device) ---------- */
 const DB = {
@@ -225,6 +242,65 @@ const DB = {
 /* ---------- session / login (demo) ---------- */
 function loadSession(){ try{ const r=localStorage.getItem('drcSession'); if(r) return JSON.parse(r); }catch(e){} return null; }
 function saveSession(){ try{ session?localStorage.setItem('drcSession',JSON.stringify(session)):localStorage.removeItem('drcSession'); }catch(e){} }
+
+/* ============================================================
+   SUPABASE DATA LAYER  (used when ONLINE)
+   Loads everything the signed-in user is allowed to see into the
+   same `state` shape the screens already use, then mutations below
+   write changes back to the database.
+   ============================================================ */
+async function sbLoadAll(){
+  const { data:{ user } } = await sb.auth.getUser();
+  if(!user) return false;
+  const { data:prof, error } = await sb.from('profiles').select('*').eq('id', user.id).single();
+  if(error || !prof){ toast('Could not load your profile'); return false; }
+  const isAdmin = prof.role === 'admin';
+  session = { role:prof.role, name:prof.full_name||user.email, id:user.id };
+  state.me = { id:user.id, name:prof.full_name||user.email, initials:prof.initials||initialsOf(prof.full_name||user.email) };
+
+  let profs = isAdmin ? ((await sb.from('profiles').select('*').order('full_name')).data || []) : [prof];
+  state.contractors = profs.map((p,i)=>({
+    id:p.id, name:p.full_name||'Contractor', initials:p.initials||initialsOf(p.full_name),
+    cls:CLS[i%CLS.length], zones:p.zones||[], status:p.status||'Active', avail:{}, template:{}
+  }));
+
+  const wks = weekStarts();
+  const av = (await sb.from('availability').select('*').in('week_start', wks)).data || [];
+  av.forEach(r=>{ const c=state.contractors.find(x=>x.id===r.contractor_id); if(c) c.avail[r.week_start]=r.data||{}; });
+
+  const asg = (await sb.from('assignments').select('*').order('created_at',{ascending:false})).data || [];
+  state.premiumOffers = asg.map(a=>({id:a.id,to:a.contractor_id,client:a.client,date:a.job_date,
+    pay:a.pay||'$27/hr',reasons:a.reasons||[],addr:a.address,status:a.status}));
+
+  const inv = (await sb.from('invoices').select('*').order('submitted_at',{ascending:false})).data || [];
+  state.invoices = inv.map(i=>({id:i.id,contractorId:i.contractor_id,contractor:i.contractor_name,
+    start:i.week_start,end:i.week_end,hours:Number(i.hours)||0,premiumHours:Number(i.premium_hours)||0,
+    notes:i.notes||'',paid:!!i.paid,status:i.paid?'Paid':'Submitted'}));
+
+  const inc = (await sb.from('incidents').select('*').order('created_at',{ascending:false})).data || [];
+  state.incidents = inc.map(r=>({id:r.id,type:r.type,where:r.where_text,date:r.occurred_on,desc:r.description}));
+
+  const msgs = (await sb.from('messages').select('*').order('created_at')).data || [];
+  if(isAdmin){
+    const byC = {};
+    msgs.forEach(m=>{ (byC[m.contractor_id]=byC[m.contractor_id]||[]).push(m); });
+    state.adminChats = Object.keys(byC).map(cid=>{
+      const c = state.contractors.find(x=>x.id===cid) || {name:'Contractor',initials:'?',cls:''};
+      const log = byC[cid].map(m=>({from:m.sender==='contractor'?'me':m.sender,text:m.body,t:new Date(m.created_at).getTime()}));
+      const last = byC[cid][byC[cid].length-1];
+      return {id:cid, contractor:c.name, initials:c.initials, cls:c.cls,
+        last:last?last.body:'', unread:!!(last && last.sender==='contractor'), log};
+    });
+  } else {
+    state.chat = msgs.map(m=>({from:m.sender==='contractor'?'me':m.sender,text:m.body,t:new Date(m.created_at).getTime()}));
+    if(state.chat.length===0) state.chat=[{from:'bot',text:BOT_GREETING,t:Date.now()}];
+  }
+  return true;
+}
+// fire-and-forget write with an error toast on failure
+function sbDo(p){ Promise.resolve(p).then(r=>{ if(r&&r.error){ console.error(r.error); toast('Save failed — check connection'); } })
+  .catch(e=>{ console.error(e); toast('Save failed'); }); }
+async function sbRefresh(){ if(ONLINE){ await sbLoadAll(); render(); } }
 
 /* ---------- seed data ---------- */
 function seed(){
@@ -309,17 +385,26 @@ function toast(msg){
 }
 
 /* ---------- login / logout (demo of role-based access) ---------- */
-function login(r){
+function login(r){   // demo / offline only
   if(r==='admin'){ session={role:'admin',name:'DRC Office'}; adminTab='dashboard'; }
   else { session={role:'contractor',name:state.me.name}; ctab='home'; }
   saveSession(); render();
 }
-function tryLogin(){
-  const e=val('loginEmail').toLowerCase(), p=val('loginPass');
+async function tryLogin(){
+  const e=val('loginEmail'), p=val('loginPass');
   if(!e||!p){ toast('Enter your email and password'); return; }
-  login(e.includes('admin')||e.includes('office')?'admin':'contractor');
+  if(ONLINE){
+    toast('Signing in…');
+    const { error } = await sb.auth.signInWithPassword({ email:e, password:p });
+    if(error){ toast('Login failed: '+error.message); return; }
+    const ok = await sbLoadAll();
+    if(ok){ if(session.role==='admin') adminTab='dashboard'; else ctab='home'; render(); }
+  } else {
+    login(e.toLowerCase().includes('admin')||e.toLowerCase().includes('office')?'admin':'contractor');
+  }
 }
-function logout(){ session=null; saveSession(); ctab='home'; adminTab='dashboard'; render(); }
+async function logout(){ if(ONLINE){ try{ await sb.auth.signOut(); }catch(e){} }
+  session=null; saveSession(); ctab='home'; adminTab='dashboard'; render(); }
 function renderLogin(){
   document.getElementById('content').innerHTML=`
   <div class="loginwrap">
@@ -334,11 +419,12 @@ function renderLogin(){
     <input id="loginPass" type="password" placeholder="••••••••" autocomplete="current-password"
       onkeydown="if(event.key==='Enter')tryLogin()">
     <button class="btn primary" style="margin-top:18px" onclick="tryLogin()">Log in</button>
+    ${ONLINE?'':`
     <div class="demohint">Demo — tap a role to preview (real logins come with the backend):</div>
     <div class="btnrow">
       <button class="btn ghost" onclick="login('contractor')">Contractor view</button>
       <button class="btn ghost" onclick="login('admin')">Admin view</button>
-    </div>
+    </div>`}
   </div>`;
 }
 
@@ -446,6 +532,7 @@ function viewJobs(){
 function answerOffer(id,ans){
   const o=state.premiumOffers.find(x=>x.id===id); if(!o)return;
   o.status=ans;
+  if(ONLINE) sbDo(sb.from('assignments').update({status:ans}).eq('id',id));
   toast(ans==='accepted'?'Assignment accepted — admin notified ✓':'Assignment declined');
   render();
 }
@@ -478,6 +565,8 @@ function submitInvoice(){
   const inv={id:'i'+Date.now(),contractorId:state.me.id,contractor:me?me.name:'',
     start,end,hours,premiumHours,notes,submittedAt:new Date().toISOString(),paid:false,status:'Submitted'};
   state.invoices.push(inv);
+  if(ONLINE) sbDo(sb.from('invoices').insert({contractor_id:state.me.id,contractor_name:me?me.name:'',
+    week_start:start,week_end:end,hours,premium_hours:premiumHours,notes,paid:false}));
   emailInvoice(inv);
   toast('Invoice saved — opening your email to send ✓'); render();
 }
@@ -525,8 +614,11 @@ function sendChat(){
 }
 function ask(text){
   state.chat.push({from:'me',text,t:Date.now()});
+  if(ONLINE) sbDo(sb.from('messages').insert({contractor_id:state.me.id,sender:'contractor',body:text}));
   render(); scrollChat();
-  setTimeout(()=>{ state.chat.push({from:'bot',text:botReply(text),t:Date.now()}); render(); scrollChat(); },500);
+  setTimeout(()=>{ const reply=botReply(text); state.chat.push({from:'bot',text:reply,t:Date.now()});
+    if(ONLINE) sbDo(sb.from('messages').insert({contractor_id:state.me.id,sender:'bot',body:reply}));
+    render(); scrollChat(); },500);
 }
 function botReply(q){
   q=q.toLowerCase();
@@ -690,7 +782,18 @@ function toggleZone(z){ const me=state.contractors.find(x=>x.id===state.me.id);
   }
   openAvail();
 }
-function saveAvail(){ closeSheet(); toast('Availability updated ✓'); render(); }
+function saveAvail(){
+  if(ONLINE){
+    const me=state.contractors.find(x=>x.id===state.me.id);
+    weekStarts().forEach(ws=>{
+      sbDo(sb.from('availability').upsert(
+        {contractor_id:state.me.id, week_start:ws, data:(me.avail[ws]||{}), updated_at:new Date().toISOString()},
+        {onConflict:'contractor_id,week_start'}));
+    });
+    sbDo(sb.from('profiles').update({zones:me.zones}).eq('id',state.me.id));
+  }
+  closeSheet(); toast('Availability updated ✓'); render();
+}
 
 function openIncident(){
   sheet(`
@@ -715,6 +818,7 @@ function submitIncident(){
   const type=val('incType'),where=val('incWhere'),date=val('incDate')||new Date().toISOString().slice(0,10),desc=val('incDesc');
   if(!where||!desc){ toast('Add location and description'); return; }
   state.incidents.push({id:'inc'+Date.now(),type,where,date,desc});
+  if(ONLINE) sbDo(sb.from('incidents').insert({contractor_id:state.me.id,type,where_text:where,occurred_on:date,description:desc}));
   closeSheet(); toast('Incident report submitted ✓'); render();
 }
 
@@ -804,6 +908,7 @@ function adminInvoiceCard(inv){
 }
 function togglePaid(id){ const inv=state.invoices.find(x=>x.id===id); if(!inv)return;
   inv.paid=!inv.paid; inv.status=inv.paid?'Paid':'Submitted';
+  if(ONLINE) sbDo(sb.from('invoices').update({paid:inv.paid}).eq('id',id));
   toast(inv.paid?'Marked paid ✓':'Marked unpaid'); render();
 }
 function adminContractorCard(c){
@@ -841,7 +946,8 @@ function adminChatView(){
 function adminSend(){
   const f=document.getElementById('adminField'); const t=f.value.trim(); if(!t)return;
   const ch=state.adminChats.find(c=>c.id===activeAdminChat);
-  ch.log.push({from:'admin',text:t,t:Date.now()}); ch.last='You: '+t; f.value='';
+  ch.log.push({from:'admin',text:t,t:Date.now()}); ch.last='You: '+t; ch.unread=false; f.value='';
+  if(ONLINE) sbDo(sb.from('messages').insert({contractor_id:activeAdminChat,sender:'admin',body:t}));
   render(); scrollChat(); toast('Reply sent to contractor');
 }
 function closeAdminChat(){ activeAdminChat=null; render(); }
@@ -878,13 +984,14 @@ function sendOffer(){
   const reasons=[...document.querySelectorAll('#ojReasons .checkrow.sel')].map(e=>e.textContent.trim());
   const who=[...document.querySelectorAll('#ojWho .checkrow.sel')].map(e=>e.dataset.id);
   if(!who.length){ toast('Pick at least one contractor'); return; }
+  const rs = reasons.length?reasons:['Extra assignment'];
   who.forEach(id=>{
-    const offer={id:'p'+Date.now()+id,to:id,client,date,pay,reasons:reasons.length?reasons:['Extra assignment'],addr,status:'pending'};
-    state.premiumOffers.push(offer);
+    state.premiumOffers.push({id:'p'+Date.now()+id,to:id,client,date,pay,reasons:rs,addr,status:'pending'});
+    if(ONLINE) sbDo(sb.from('assignments').insert({contractor_id:id,client,job_date:date,address:addr,pay,reasons:rs,status:'pending'}));
   });
   closeSheet();
   toast(`Offer sent to ${who.length} contractor${who.length>1?'s':''} ✓`);
-  render();
+  if(ONLINE) sbRefresh(); else render();
 }
 
 /* ---------- sheet/modal plumbing ---------- */
@@ -896,7 +1003,21 @@ document.getElementById('modal').addEventListener('click',e=>{ if(e.target.id===
 function val(id){ const e=document.getElementById(id); return e?e.value.trim():''; }
 
 /* ---------- boot ---------- */
-render();
+async function boot(){
+  if(ONLINE){
+    session=null;
+    try{
+      const { data:{ session:s } } = await sb.auth.getSession();
+      if(s){ const ok=await sbLoadAll(); if(!ok) session=null; }
+    }catch(e){ console.error(e); }
+    render();
+    sb.auth.onAuthStateChange((_e,s2)=>{ if(!s2){ session=null; render(); } });
+  } else {
+    session=loadSession();
+    render();
+  }
+}
+boot();
 </script>
 </body>
 </html>
