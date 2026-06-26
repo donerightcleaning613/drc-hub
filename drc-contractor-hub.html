@@ -1,0 +1,902 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#045ea9">
+<title>DRC Contractor Hub</title>
+<style>
+/* ============================================================
+   CONFIG NOTE: edit the CONFIG object near the bottom of this
+   file to set your company name, support phone number, and
+   the jobber guide video link.
+   ============================================================ */
+:root{
+  --teal:#045ea9; --teal-d:#034a85; --teal-l:#2b7fd0;
+  --bg:#f1f5f9; --card:#ffffff; --ink:#0f172a; --muted:#64748b;
+  --line:#e2e8f0; --amber:#f59e0b; --amber-bg:#fef3c7;
+  --green:#16a34a; --green-bg:#dcfce7; --red:#dc2626; --red-bg:#fee2e2;
+  --blue:#2563eb; --blue-bg:#dbeafe; --radius:16px;
+  --shadow:0 1px 3px rgba(0,0,0,.08),0 1px 2px rgba(0,0,0,.04);
+  --shadow-lg:0 10px 25px rgba(0,0,0,.12);
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;padding:0}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  background:var(--bg); color:var(--ink);
+  font-size:15px; line-height:1.45;
+}
+/* phone frame for desktop preview */
+.frame{
+  max-width:430px; margin:0 auto; min-height:100vh;
+  background:var(--bg); position:relative;
+  box-shadow:0 0 60px rgba(0,0,0,.12);
+  display:flex; flex-direction:column;
+}
+.topbar{
+  background:var(--teal); color:#fff; padding:14px 16px;
+  display:flex; align-items:center; justify-content:space-between;
+  position:sticky; top:0; z-index:40;
+}
+.topbar h1{font-size:17px; margin:0; font-weight:700; display:flex; align-items:center; gap:8px}
+.logo{width:26px;height:26px;border-radius:7px;background:#fff;color:var(--teal);
+  display:grid;place-items:center;font-weight:800;font-size:13px}
+.roleseg{display:flex;background:rgba(255,255,255,.18);border-radius:999px;padding:3px}
+.roleseg button{
+  border:0;background:transparent;color:#fff;font-size:12px;font-weight:600;
+  padding:6px 11px;border-radius:999px;cursor:pointer;opacity:.8
+}
+.roleseg button.on{background:#fff;color:var(--teal);opacity:1}
+.hdruser{display:flex;align-items:center;gap:9px;font-size:13px;font-weight:600}
+.logoutbtn{border:0;background:rgba(255,255,255,.18);color:#fff;font-size:12px;font-weight:600;
+  padding:7px 12px;border-radius:999px;cursor:pointer}
+.loginwrap{display:flex;flex-direction:column;justify-content:center;min-height:calc(100vh - 120px);padding:8px 4px}
+.loginbrand{text-align:center;margin-bottom:26px}
+.loginbrand .blogo{width:64px;height:64px;border-radius:18px;background:var(--teal);color:#fff;
+  display:grid;place-items:center;font-weight:800;font-size:26px;margin:0 auto 12px}
+.loginbrand h2{margin:0;font-size:22px}.loginbrand p{margin:4px 0 0;color:var(--muted)}
+.demohint{text-align:center;font-size:12px;color:var(--muted);margin:16px 0 8px}
+.content{flex:1;padding:16px 16px 96px;overflow-y:auto}
+.content svg{vertical-align:-3px;flex:none}
+.btn svg,.iconbtn svg{width:17px;height:17px}
+.view{display:none;animation:fade .25s ease}
+.view.on{display:block}
+@keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+h2.section{font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin:22px 0 10px;font-weight:700}
+h2.section:first-child{margin-top:4px}
+.card{background:var(--card);border-radius:var(--radius);padding:16px;box-shadow:var(--shadow);margin-bottom:12px}
+.card h3{margin:0 0 4px;font-size:16px}
+.row{display:flex;align-items:center;gap:10px}
+.spread{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.muted{color:var(--muted);font-size:13px}
+.pill{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:700;
+  padding:4px 9px;border-radius:999px;text-transform:uppercase;letter-spacing:.03em}
+.pill.amber{background:var(--amber-bg);color:#92400e}
+.pill.green{background:var(--green-bg);color:#166534}
+.pill.red{background:var(--red-bg);color:#991b1b}
+.pill.blue{background:var(--blue-bg);color:#1e40af}
+.pill.gray{background:#f1f5f9;color:#475569}
+
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;
+  border:0;border-radius:12px;padding:13px 16px;font-size:15px;font-weight:600;
+  cursor:pointer;width:100%;transition:transform .05s}
+.btn:active{transform:scale(.98)}
+.btn.primary{background:var(--teal);color:#fff}
+.btn.green{background:var(--green);color:#fff}
+.btn.red{background:#fff;color:var(--red);border:1.5px solid #fecaca}
+.btn.ghost{background:#f1f5f9;color:var(--ink)}
+.btn.sm{padding:10px 12px;font-size:14px;width:auto}
+.btnrow{display:flex;gap:10px}
+
+input,select,textarea{
+  width:100%;border:1.5px solid var(--line);border-radius:12px;
+  padding:12px;font-size:15px;font-family:inherit;background:#fff;color:var(--ink);margin-top:6px
+}
+textarea{resize:vertical;min-height:80px}
+label{font-size:13px;font-weight:600;color:#334155;display:block;margin-top:12px}
+label:first-child{margin-top:0}
+
+/* bottom nav */
+.tabbar{
+  position:fixed;left:50%;transform:translateX(-50%);bottom:0;width:100%;max-width:430px;
+  background:#fff;border-top:1px solid var(--line);
+  display:flex;z-index:50;padding-bottom:env(safe-area-inset-bottom)
+}
+.tabbar button{
+  flex:1;border:0;background:transparent;padding:9px 0 11px;cursor:pointer;
+  display:flex;flex-direction:column;align-items:center;gap:3px;color:var(--muted);
+  font-size:10.5px;font-weight:600;position:relative
+}
+.tabbar button.on{color:var(--teal)}
+.tabbar svg{width:23px;height:23px}
+.tabbar .badge{position:absolute;top:4px;right:50%;margin-right:-22px;background:var(--red);
+  color:#fff;font-size:9px;font-weight:700;min-width:16px;height:16px;border-radius:8px;
+  display:grid;place-items:center;padding:0 4px}
+
+/* availability grid */
+.dayrow{display:flex;align-items:center;justify-content:space-between;padding:11px 0;border-bottom:1px solid var(--line)}
+.dayrow:last-child{border:0}
+.dayname{font-weight:600;width:42px}
+.switch{width:46px;height:27px;border-radius:999px;background:#cbd5e1;position:relative;cursor:pointer;flex:none;transition:background .2s}
+.switch.on{background:var(--teal)}
+.switch i{position:absolute;top:3px;left:3px;width:21px;height:21px;border-radius:50%;background:#fff;transition:left .2s;box-shadow:0 1px 2px rgba(0,0,0,.2)}
+.switch.on i{left:22px}
+.timesel{display:flex;gap:6px;align-items:center}
+.timesel select{width:auto;margin:0;padding:7px 8px;font-size:13px}
+
+/* chat */
+.chatwrap{display:flex;flex-direction:column;height:calc(100vh - 56px - 80px)}
+.chatlog{flex:1;overflow-y:auto;padding:4px 2px 10px;display:flex;flex-direction:column;gap:10px}
+.msg{max-width:80%;padding:10px 13px;border-radius:16px;font-size:14px;line-height:1.4;white-space:pre-wrap}
+.msg.bot{background:#fff;border:1px solid var(--line);align-self:flex-start;border-bottom-left-radius:4px}
+.msg.me{background:var(--teal);color:#fff;align-self:flex-end;border-bottom-right-radius:4px}
+.msg.admin{background:#eef2ff;border:1px solid #c7d2fe;align-self:flex-start;border-bottom-left-radius:4px}
+.msgmeta{font-size:10px;color:var(--muted);margin:2px 4px}
+.quickreplies{display:flex;flex-wrap:wrap;gap:7px;margin:6px 0}
+.quickreplies button{background:#fff;border:1.5px solid var(--teal);color:var(--teal);
+  border-radius:999px;padding:7px 12px;font-size:12.5px;font-weight:600;cursor:pointer}
+.chatinput{display:flex;gap:8px;align-items:center;padding-top:8px;border-top:1px solid var(--line)}
+.chatinput input{margin:0}
+.iconbtn{flex:none;width:44px;height:44px;border-radius:50%;border:0;background:var(--teal);color:#fff;cursor:pointer;display:grid;place-items:center}
+
+/* accordion */
+.acc{background:#fff;border-radius:12px;box-shadow:var(--shadow);margin-bottom:8px;overflow:hidden}
+.acc summary{padding:14px 16px;font-weight:600;cursor:pointer;list-style:none;display:flex;justify-content:space-between;align-items:center}
+.acc summary::-webkit-details-marker{display:none}
+.acc[open] summary{color:var(--teal)}
+.acc .accbody{padding:0 16px 14px;color:#334155;font-size:14px}
+
+.videoph{background:linear-gradient(135deg,#045ea9,#2b7fd0);border-radius:14px;height:180px;
+  display:grid;place-items:center;color:#fff;cursor:pointer;position:relative;overflow:hidden;margin-bottom:8px}
+.playbtn{width:62px;height:62px;border-radius:50%;background:rgba(255,255,255,.25);display:grid;place-items:center;backdrop-filter:blur(2px)}
+.playbtn::after{content:"";border-left:20px solid #fff;border-top:13px solid transparent;border-bottom:13px solid transparent;margin-left:5px}
+
+.empty{text-align:center;color:var(--muted);padding:40px 20px;font-size:14px}
+.toast{position:fixed;bottom:110px;left:50%;transform:translateX(-50%);background:var(--ink);color:#fff;
+  padding:12px 20px;border-radius:999px;font-size:14px;font-weight:600;z-index:90;opacity:0;
+  transition:opacity .2s,transform .2s;pointer-events:none;white-space:nowrap}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(-6px)}
+
+/* admin */
+.statgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:6px}
+.stat{background:#fff;border-radius:14px;padding:14px;box-shadow:var(--shadow)}
+.stat .n{font-size:26px;font-weight:800;color:var(--teal)}
+.stat .l{font-size:12px;color:var(--muted);font-weight:600}
+.avatar{width:38px;height:38px;border-radius:50%;background:var(--teal);color:#fff;display:grid;place-items:center;font-weight:700;flex:none}
+.avatar.b{background:#7c3aed}.avatar.c{background:#db2777}.avatar.d{background:#ea580c}.avatar.e{background:#0891b2}
+.zonechips{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px}
+.chip{background:#f1f5f9;color:#475569;font-size:11px;font-weight:600;padding:3px 8px;border-radius:6px}
+.availbar{display:flex;gap:3px;margin-top:8px}
+.availbar span{flex:1;text-align:center;font-size:9px;font-weight:700;padding:5px 0;border-radius:5px;background:#f1f5f9;color:#94a3b8}
+.availbar span.a{background:var(--green-bg);color:#166534}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:80;display:none;align-items:flex-end}
+.modal.on{display:flex}
+.sheet{background:#fff;width:100%;max-width:430px;margin:0 auto;border-radius:20px 20px 0 0;padding:20px 18px 28px;max-height:88vh;overflow-y:auto;animation:up .25s ease}
+@keyframes up{from{transform:translateY(100%)}to{transform:none}}
+.sheet h3{margin:0 0 14px;font-size:18px}
+.closex{position:absolute;right:16px;top:14px;border:0;background:#f1f5f9;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer;color:var(--muted)}
+.checkrow{display:flex;align-items:center;gap:10px;padding:11px;border:1.5px solid var(--line);border-radius:12px;margin-bottom:8px;cursor:pointer}
+.checkrow.sel{border-color:var(--teal);background:#eaf2fb}
+.checkrow .cb{width:22px;height:22px;border-radius:6px;border:2px solid #cbd5e1;flex:none;display:grid;place-items:center}
+.checkrow.sel .cb{background:var(--teal);border-color:var(--teal);color:#fff}
+.divider{height:1px;background:var(--line);margin:16px 0}
+.notice{background:#eaf2fb;border:1px solid #b6d4f0;border-radius:12px;padding:12px;font-size:13px;color:#045ea9;margin-bottom:12px}
+</style>
+</head>
+<body>
+<div class="frame">
+  <div class="topbar">
+    <h1><span class="logo" id="logoTxt">DRC</span> <span id="brandTxt">Contractor Hub</span></h1>
+    <div id="headerRight"></div>
+  </div>
+
+  <div class="content" id="content"><!-- views injected --></div>
+
+  <!-- contractor tab bar -->
+  <nav class="tabbar" id="tabbar"></nav>
+</div>
+
+<div class="toast" id="toast"></div>
+<div class="modal" id="modal"><div class="sheet" id="sheet"></div></div>
+
+<script>
+/* ============================================================
+   ⚙️  CONFIG — edit these three values
+   ============================================================ */
+const CONFIG = {
+  COMPANY: "DRC",                       // shows in logo + title
+  BRAND: "Contractor Hub",              // subtitle in header
+  SUPPORT_PHONE: "613-324-6779",        // management line for SMS button
+  OFFICE_EMAIL: "contact@donerightcleaning.ca", // invoices are emailed here on submit
+  GUIDE_VIDEO_FILE: "jobber-guide.mp4", // a video file kept next to this HTML (plays in-app)
+  GUIDE_VIDEO_URL: ""                   // OR paste a YouTube/Vimeo link instead
+};
+
+/* ---------- storage helpers (persist on this device) ---------- */
+const DB = {
+  load(){
+    try{ const r = localStorage.getItem('drcHub_v5'); if(r) return JSON.parse(r); }catch(e){}
+    return null;
+  },
+  save(){ try{ localStorage.setItem('drcHub_v5', JSON.stringify(state)); }catch(e){} }
+};
+/* ---------- session / login (demo) ---------- */
+function loadSession(){ try{ const r=localStorage.getItem('drcSession'); if(r) return JSON.parse(r); }catch(e){} return null; }
+function saveSession(){ try{ session?localStorage.setItem('drcSession',JSON.stringify(session)):localStorage.removeItem('drcSession'); }catch(e){} }
+
+/* ---------- seed data ---------- */
+function seed(){
+  return {
+    me: { id:'c1', name:'Maria Lopez', initials:'ML' },
+    contractors:[
+      {id:'c1',name:'Maria Lopez',initials:'ML',cls:'',zones:['Westboro','Hintonburg','Kanata'],
+        template:{Mon:{from:'09:00',to:'17:00'},Tue:{from:'09:00',to:'17:00'},Wed:0,Thu:{from:'09:00',to:'17:00'},Fri:{from:'09:00',to:'17:00'},Sat:{from:'09:00',to:'14:00'},Sun:0}, avail:{}, status:'Active'},
+      {id:'c2',name:'James Okafor',initials:'JO',cls:'b',zones:['Orleans','Vanier','Beacon Hill'],
+        template:{Mon:{from:'09:00',to:'15:00'},Tue:0,Wed:{from:'09:00',to:'15:00'},Thu:{from:'09:00',to:'15:00'},Fri:{from:'09:00',to:'15:00'},Sat:0,Sun:0}, avail:{}, status:'Active'},
+      {id:'c3',name:'Priya Sharma',initials:'PS',cls:'c',zones:['Anywhere in Ottawa'],
+        template:{Mon:0,Tue:{from:'10:00',to:'18:00'},Wed:{from:'10:00',to:'18:00'},Thu:0,Fri:{from:'10:00',to:'19:00'},Sat:{from:'09:00',to:'17:00'},Sun:{from:'09:00',to:'17:00'}}, avail:{}, status:'Active'},
+      {id:'c4',name:'Tom Beaulieu',initials:'TB',cls:'d',zones:['Centretown','The Glebe','Old Ottawa South'],
+        template:{Mon:{from:'09:00',to:'16:00'},Tue:{from:'09:00',to:'16:00'},Wed:{from:'09:00',to:'16:00'},Thu:{from:'09:00',to:'16:00'},Fri:0,Sat:0,Sun:0}, avail:{}, status:'Active'},
+      {id:'c5',name:'Aisha Khan',initials:'AK',cls:'e',zones:['Nepean','Bells Corners'],
+        template:{Mon:0,Tue:0,Wed:{from:'09:00',to:'17:00'},Thu:{from:'09:00',to:'17:00'},Fri:{from:'09:00',to:'17:00'},Sat:{from:'09:00',to:'13:00'},Sun:0}, avail:{}, status:'On break'}
+    ],
+    // extra assignments offered to the current contractor (c1). All extra work pays $27/hr.
+    premiumOffers:[
+      {id:'p1',to:'c1',client:'Hampton Inn — Lobby deep clean',date:'Sat Jun 27, 8:00 AM',
+        pay:'$27/hr', reasons:['Short notice','Holiday weekend'], addr:'100 Coventry Rd', status:'pending'},
+      {id:'p2',to:'c1',client:'Private — Move-out clean',date:'Sun Jun 28, 10:00 AM',
+        pay:'$27/hr', reasons:['Outside service zone'], addr:'55 Stonehaven Dr, Stittsville', status:'pending'}
+    ],
+    invoices:[
+      {id:'iv1',contractorId:'c2',contractor:'James Okafor',start:'2026-06-15',end:'2026-06-21',hours:28,premiumHours:0,notes:'Orleans route',paid:true,status:'Paid'},
+      {id:'iv2',contractorId:'c3',contractor:'Priya Sharma',start:'2026-06-15',end:'2026-06-21',hours:24,premiumHours:4,notes:'+ Sat short-notice move-out',paid:false,status:'Submitted'},
+      {id:'iv3',contractorId:'c4',contractor:'Tom Beaulieu',start:'2026-06-15',end:'2026-06-21',hours:20,premiumHours:0,notes:'',paid:false,status:'Submitted'}
+    ],
+    incidents:[],
+    chat:[
+      {from:'bot',text:"Hi Maria 👋 I'm the DRC assistant. Ask me anything — pay, scheduling, extra assignments, or how to submit your weekly invoice. If I can't help, you can reach a real person.",t:Date.now()-60000}
+    ],
+    // admin: chats from contractors needing a human
+    adminChats:[
+      {id:'ac1',contractor:'James Okafor',initials:'JO',cls:'b',last:"The AI couldn't tell me — am I covered if a client's vase breaks?",unread:true,
+        log:[{from:'me',text:'Am I covered if I accidentally break something at a client site?',t:Date.now()-900000},
+             {from:'bot',text:"Great question — for liability/insurance specifics I'll connect you with the office.",t:Date.now()-880000},
+             {from:'me',text:"The AI couldn't tell me — am I covered if a client's vase breaks?",t:Date.now()-870000}]},
+      {id:'ac2',contractor:'Priya Sharma',initials:'PS',cls:'c',last:"Can I get the Barrhaven Saturday job moved to Sunday?",unread:true,
+        log:[{from:'me',text:"Can I get the Barrhaven Saturday job moved to Sunday?",t:Date.now()-300000}]}
+    ]
+  };
+}
+
+let state = DB.load() || seed();
+let role = 'contractor';
+let ctab = 'home';
+let activeAdminChat = null;
+let availWeek = 0;     // which of the next 4 weeks the contractor is editing
+let adminWeek = 0;     // which week the admin scheduling board is viewing
+let adminTab = 'dashboard';   // 'dashboard' | 'invoices'
+let invFilter = 'unpaid';     // 'all' | 'unpaid' | 'paid'
+let session = loadSession();  // {role,name} or null when logged out
+
+/* ---------- week helpers (availability for the next month) ---------- */
+function isoDate(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+function mondayOf(d){ const x=new Date(d); const off=(x.getDay()+6)%7; x.setDate(x.getDate()-off); x.setHours(0,0,0,0); return x; }
+function weekStarts(){ const m=mondayOf(new Date()); const out=[]; for(let i=0;i<4;i++){ const w=new Date(m); w.setDate(m.getDate()+i*7); out.push(isoDate(w)); } return out; }
+function weekLabel(iso){ const s=new Date(iso+'T00:00:00'); const e=new Date(s); e.setDate(s.getDate()+6);
+  const f=d=>d.toLocaleDateString('en-US',{month:'short',day:'numeric'}); return f(s)+' – '+f(e); }
+function clone(o){ return JSON.parse(JSON.stringify(o)); }
+function ensureWeeks(c){ if(!c.avail)c.avail={}; weekStarts().forEach(ws=>{ if(!c.avail[ws]) c.avail[ws]=clone(c.template||{}); }); }
+function ensureAllWeeks(){ (state.contractors||[]).forEach(ensureWeeks); }
+
+/* ---------- icons ---------- */
+const ICON = {
+  home:'<path d="M3 11l9-8 9 8M5 10v10h5v-6h4v6h5V10"/>',
+  jobs:'<rect x="3" y="6" width="18" height="14" rx="2"/><path d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/>',
+  invoice:'<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6M9 16h4"/>',
+  chat:'<path d="M21 12a8 8 0 01-11.6 7.1L4 20l1-4.4A8 8 0 1121 12z"/>',
+  more:'<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>',
+  send:'<path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>'
+};
+function svg(p){return `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;}
+
+/* ---------- toast ---------- */
+let toastT;
+function toast(msg){
+  const el=document.getElementById('toast'); el.textContent=msg; el.classList.add('show');
+  clearTimeout(toastT); toastT=setTimeout(()=>el.classList.remove('show'),2200);
+}
+
+/* ---------- login / logout (demo of role-based access) ---------- */
+function login(r){
+  if(r==='admin'){ session={role:'admin',name:'DRC Office'}; adminTab='dashboard'; }
+  else { session={role:'contractor',name:state.me.name}; ctab='home'; }
+  saveSession(); render();
+}
+function tryLogin(){
+  const e=val('loginEmail').toLowerCase(), p=val('loginPass');
+  if(!e||!p){ toast('Enter your email and password'); return; }
+  login(e.includes('admin')||e.includes('office')?'admin':'contractor');
+}
+function logout(){ session=null; saveSession(); ctab='home'; adminTab='dashboard'; render(); }
+function renderLogin(){
+  document.getElementById('content').innerHTML=`
+  <div class="loginwrap">
+    <div class="loginbrand">
+      <div class="blogo">${CONFIG.COMPANY}</div>
+      <h2>${CONFIG.COMPANY} ${CONFIG.BRAND}</h2>
+      <p>Sign in to your account</p>
+    </div>
+    <label>Email</label>
+    <input id="loginEmail" type="email" placeholder="you@example.com" autocomplete="username">
+    <label>Password</label>
+    <input id="loginPass" type="password" placeholder="••••••••" autocomplete="current-password"
+      onkeydown="if(event.key==='Enter')tryLogin()">
+    <button class="btn primary" style="margin-top:18px" onclick="tryLogin()">Log in</button>
+    <div class="demohint">Demo — tap a role to preview (real logins come with the backend):</div>
+    <div class="btnrow">
+      <button class="btn ghost" onclick="login('contractor')">Contractor view</button>
+      <button class="btn ghost" onclick="login('admin')">Admin view</button>
+    </div>
+  </div>`;
+}
+
+/* ---------- nav ---------- */
+function setTab(t){ ctab=t; render(); }
+
+/* ---------- main render ---------- */
+function render(){
+  ensureAllWeeks();
+  document.getElementById('logoTxt').textContent=CONFIG.COMPANY;
+  document.getElementById('brandTxt').textContent=CONFIG.BRAND;
+  const hr=document.getElementById('headerRight');
+  if(!session){
+    hr.innerHTML='';
+    document.getElementById('tabbar').innerHTML='';
+    renderLogin(); DB.save(); return;
+  }
+  role=session.role;
+  hr.innerHTML=`<div class="hdruser"><span>${session.name}</span><button class="logoutbtn" onclick="logout()">Log out</button></div>`;
+  if(role==='contractor'){ renderContractor(); renderTabbar(); }
+  else { renderAdmin(); document.getElementById('tabbar').innerHTML=''; }
+  DB.save();
+}
+
+function renderTabbar(){
+  const pend = state.premiumOffers.filter(o=>o.status==='pending').length;
+  const tabs=[['home','Home',ICON.home],['jobs','Jobs',ICON.jobs],
+    ['invoices','Invoices',ICON.invoice],['chat','Chat',ICON.chat],['more','Guide',ICON.more]];
+  document.getElementById('tabbar').innerHTML=tabs.map(([id,lbl,ic])=>
+    `<button class="${ctab===id?'on':''}" onclick="setTab('${id}')">
+       ${svg(ic)}<span>${lbl}</span>
+       ${id==='jobs'&&pend?`<span class="badge">${pend}</span>`:''}
+     </button>`).join('');
+}
+
+/* ============================================================
+   CONTRACTOR VIEWS
+   ============================================================ */
+function renderContractor(){
+  const c=document.getElementById('content');
+  if(ctab==='home') c.innerHTML=viewHome();
+  else if(ctab==='jobs') c.innerHTML=viewJobs();
+  else if(ctab==='invoices') c.innerHTML=viewInvoices();
+  else if(ctab==='chat'){ c.innerHTML=viewChat(); scrollChat(); }
+  else if(ctab==='more') c.innerHTML=viewMore();
+}
+
+function viewHome(){
+  const me=state.contractors.find(x=>x.id===state.me.id);
+  const pend=state.premiumOffers.filter(o=>o.status==='pending').length;
+  const ws=weekStarts()[0]; const wk=me.avail[ws]||{};
+  const days=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].filter(d=>wk[d]).join(', ')||'none set';
+  return `
+  <h2 class="section">Welcome back</h2>
+  <div class="card">
+    <div class="row"><div class="avatar">${me.initials}</div>
+      <div><h3 style="margin:0">${me.name}</h3><div class="muted">${me.status} contractor</div></div></div>
+  </div>
+
+  <h2 class="section">Your status</h2>
+  <div class="card spread">
+    <div><div class="muted">Available this week</div><strong>${days}</strong></div>
+    <button class="btn ghost sm" onclick="setTab('home');openAvail()">Edit</button>
+  </div>
+  <div class="card spread">
+    <div><div class="muted">Service zones</div><strong>${me.zones.join(', ')}</strong></div>
+    <button class="btn ghost sm" onclick="openAvail()">Edit</button>
+  </div>
+
+  <h2 class="section">Needs your attention</h2>
+  ${pend?`<div class="card spread" onclick="setTab('jobs')" style="cursor:pointer">
+    <div class="row"><span class="pill amber">${pend} extra assignment${pend>1?'s':''}</span>
+    <span class="muted">Tap to accept or decline</span></div>${svg('<path d="M9 18l6-6-6-6"/>')}
+  </div>`:`<div class="card muted">No extra assignments right now 🎉</div>`}
+
+  <h2 class="section">Quick actions</h2>
+  <div class="btnrow" style="margin-bottom:10px">
+    <button class="btn primary" onclick="openAvail()">${svg('<path d="M8 2v4M16 2v4M3 10h18"/><rect x="3" y="4" width="18" height="18" rx="2"/>')} Availability</button>
+    <button class="btn ghost" onclick="setTab('chat')">${svg(ICON.chat)} Get help</button>
+  </div>
+  <div class="btnrow">
+    <button class="btn ghost" onclick="setTab('invoices')">${svg(ICON.invoice)} Invoice</button>
+    <button class="btn ghost" onclick="openIncident()">${svg('<path d="M12 9v4M12 17h.01M10.3 3.9L1.8 18a2 2 0 001.7 3h17a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z"/>')} Report</button>
+  </div>`;
+}
+
+function viewJobs(){
+  const offers=state.premiumOffers;
+  return `
+  <div class="notice">Your regular schedule is set by the office within your availability. Any <strong>extra assignments</strong> — short-notice, holiday, or outside your zone — show up here at <strong>$27/hr</strong> to accept or decline.</div>
+  <h2 class="section">Extra assignments</h2>
+  ${offers.length?offers.map(o=>`
+    <div class="card">
+      <div class="spread"><h3>${o.client}</h3><span class="pill green">${o.pay}</span></div>
+      <div class="muted" style="margin:4px 0 8px">${svg('<path d="M8 2v4M16 2v4M3 10h18"/><rect x="3" y="4" width="18" height="18" rx="2"/>')} ${o.date} · ${o.addr}</div>
+      <div class="zonechips" style="margin-bottom:12px">${o.reasons.map(r=>`<span class="pill amber">${r}</span>`).join('')}</div>
+      ${o.status==='pending'?`<div class="btnrow">
+        <button class="btn green" onclick="answerOffer('${o.id}','accepted')">Accept</button>
+        <button class="btn red" onclick="answerOffer('${o.id}','declined')">Decline</button></div>`
+        :`<span class="pill ${o.status==='accepted'?'green':'gray'}">${o.status==='accepted'?'✓ Accepted':'Declined'}</span>`}
+    </div>`).join(''):`<div class="card muted">No extra assignments right now.</div>`}
+  `;
+}
+
+function answerOffer(id,ans){
+  const o=state.premiumOffers.find(x=>x.id===id); if(!o)return;
+  o.status=ans;
+  toast(ans==='accepted'?'Assignment accepted — admin notified ✓':'Assignment declined');
+  render();
+}
+
+function viewInvoices(){
+  return `
+  <div class="notice">Submit <strong>one invoice per week</strong> for the hours you worked. When you submit, an email opens pre-filled to the office — just hit send. Payment is by direct deposit.</div>
+  <h2 class="section">Submit your weekly invoice</h2>
+  <div class="card">
+    <label>Week start (Monday)</label>
+    <input id="invStart" type="date">
+    <label>Week end (Sunday)</label>
+    <input id="invEnd" type="date">
+    <label>Regular hours worked this week</label>
+    <input id="invHours" type="number" inputmode="decimal" step="0.25" placeholder="e.g. 22.5">
+    <label>Premium hours (short-notice — $27/hr)</label>
+    <input id="invPremium" type="number" inputmode="decimal" step="0.25" placeholder="e.g. 4">
+    <label>Notes (optional — jobs covered)</label>
+    <textarea id="invNotes" placeholder="e.g. Mon Maplewood Offices, Wed Glebe residence…"></textarea>
+    <button class="btn primary" style="margin-top:14px" onclick="submitInvoice()">Submit weekly invoice</button>
+  </div>
+  <p class="muted" style="text-align:center">⏰ Invoices must be submitted by midnight on Sundays, or processing may be delayed.</p>
+  `;
+}
+function submitInvoice(){
+  const start=val('invStart'),end=val('invEnd'),hours=parseFloat(val('invHours')),
+        premiumHours=parseFloat(val('invPremium'))||0,notes=val('invNotes');
+  if(!start||!end||!hours){ toast('Add the week range and regular hours'); return; }
+  const me=state.contractors.find(x=>x.id===state.me.id);
+  const inv={id:'i'+Date.now(),contractorId:state.me.id,contractor:me?me.name:'',
+    start,end,hours,premiumHours,notes,submittedAt:new Date().toISOString(),paid:false,status:'Submitted'};
+  state.invoices.push(inv);
+  emailInvoice(inv);
+  toast('Invoice saved — opening your email to send ✓'); render();
+}
+function emailInvoice(inv){
+  if(!CONFIG.OFFICE_EMAIL) return;
+  const subj=`Weekly invoice — ${inv.contractor} — ${inv.start} to ${inv.end}`;
+  const body=
+`Contractor: ${inv.contractor}
+Week: ${inv.start} to ${inv.end}
+Regular hours: ${inv.hours}
+Premium hours (short-notice): ${inv.premiumHours||0}
+Notes: ${inv.notes||'—'}
+
+(Submitted from the DRC Contractor Hub)`;
+  window.location.href=`mailto:${CONFIG.OFFICE_EMAIL}?subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(body)}`;
+}
+
+/* ---------- CHAT (AI bot + SMS support) ---------- */
+function viewChat(){
+  return `
+  <div class="chatwrap">
+    <div class="notice">💬 The assistant answers instantly. Still stuck? Tap <strong>Text a human</strong> to SMS the office.</div>
+    <div class="chatlog" id="chatlog">${state.chat.map(renderMsg).join('')}</div>
+    <div class="quickreplies" id="quick">
+      ${['How do I get paid?','What counts as premium pay?','Change my availability','Report a problem']
+        .map(q=>`<button onclick="ask('${q}')">${q}</button>`).join('')}
+    </div>
+    <button class="btn red" style="margin-bottom:8px" onclick="textHuman()">
+      ${svg(ICON.chat)} Text a human (${CONFIG.SUPPORT_PHONE})</button>
+    <div class="chatinput">
+      <input id="chatField" placeholder="Type a message…" onkeydown="if(event.key==='Enter')sendChat()">
+      <button class="iconbtn" onclick="sendChat()">${svg(ICON.send)}</button>
+    </div>
+  </div>`;
+}
+function renderMsg(m){
+  const cls=m.from==='me'?'me':(m.from==='admin'?'admin':'bot');
+  const who=m.from==='admin'?'<div class="msgmeta">DRC office</div>':'';
+  return `${who}<div class="msg ${cls}">${m.text}</div>`;
+}
+function scrollChat(){ const l=document.getElementById('chatlog'); if(l)l.scrollTop=l.scrollHeight; }
+function sendChat(){
+  const f=document.getElementById('chatField'); const t=f.value.trim(); if(!t)return;
+  f.value=''; ask(t);
+}
+function ask(text){
+  state.chat.push({from:'me',text,t:Date.now()});
+  render(); scrollChat();
+  setTimeout(()=>{ state.chat.push({from:'bot',text:botReply(text),t:Date.now()}); render(); scrollChat(); },500);
+}
+function botReply(q){
+  q=q.toLowerCase();
+  if(q.includes('paid')||q.includes('pay')&&q.includes('get')||q.includes('invoice'))
+    return "Submit one invoice each week (Sunday) in the Invoices tab with your total hours worked. Payments are issued biweekly by direct deposit, and Jobber is the source of truth for hours. Want me to open the invoice form?";
+  if(q.includes('premium')||q.includes('extra')||q.includes('27'))
+    return "Extra assignments — short-notice jobs, holidays, or work outside your usual zone — pay $27/hr. They show up in the Jobs tab and you can accept or decline each one. Your regular schedule is handled by the office within your set availability.";
+  if(q.includes('availab')||q.includes('schedule')||q.includes('zone'))
+    return "Tap the Availability button on your Home screen to set which days and times you can work, and which Ottawa zones you cover (including 'Anywhere in Ottawa'). The office schedules you within that — keep it current!";
+  if(q.includes('decline')||q.includes('cancel'))
+    return "For any extra assignment in the Jobs tab, just hit Decline (or Accept). The office is notified automatically.";
+  if(q.includes('report')||q.includes('incident')||q.includes('problem')||q.includes('broke')||q.includes('damage'))
+    return "Sorry to hear that. Please file an Incident Report from the Guide tab (or Home → Report). For anything urgent or about insurance/liability, tap 'Text a human' below and the office will follow up.";
+  if(q.includes('supplies')||q.includes('equipment'))
+    return "Standard supplies are provided per job. If you're short, message the office. For a missing-supplies emergency, text a human below.";
+  if(q.includes('hi')||q.includes('hello')||q.includes('hey'))
+    return "Hi! 👋 I can help with pay, scheduling, premium jobs, invoices and incident reports. What do you need?";
+  return "I'm not 100% sure on that one. For anything I can't answer — pay disputes, insurance, urgent issues — tap 'Text a human' below and someone from the DRC office will reply by SMS.";
+}
+function textHuman(){
+  const num=CONFIG.SUPPORT_PHONE.replace(/[^+\d]/g,'');
+  const body=encodeURIComponent(`Hi, this is ${state.me.name} (DRC contractor). I need help with: `);
+  window.location.href=`sms:${num}?&body=${body}`;
+  toast('Opening your messages app…');
+}
+
+/* ---------- MORE: FAQs, video, expectations, incident ---------- */
+function viewMore(){
+  const vid = CONFIG.GUIDE_VIDEO_FILE
+    ? `<video controls playsinline preload="metadata" src="${CONFIG.GUIDE_VIDEO_FILE}"
+         style="width:100%;border-radius:14px;background:#000;max-height:420px;margin-bottom:8px"></video>`
+    : CONFIG.GUIDE_VIDEO_URL
+    ? `<a href="${CONFIG.GUIDE_VIDEO_URL}" target="_blank" style="text-decoration:none">
+         <div class="videoph"><div class="playbtn"></div></div></a>`
+    : `<div class="videoph" onclick="toast('Add your video in CONFIG.GUIDE_VIDEO_FILE or _URL')"><div class="playbtn"></div>
+         <span style="position:absolute;bottom:12px;font-size:12px">Jobber Guide video</span></div>`;
+  return `
+  <h2 class="section">Jobber guide</h2>
+  ${vid}
+  <p class="muted">A short walkthrough of how DRC jobs work, from accepting to invoicing.</p>
+
+  <h2 class="section">Quality & service expectations</h2>
+  <div class="card">
+    <p style="margin:0 0 8px"><strong>Every DRC job, every time:</strong></p>
+    ${[
+      'Arrive on time with the proper equipment and supplies for the job.',
+      'Arrive clean, presentable, and ready to work; wear clean indoor footwear.',
+      'Complete the full job checklist before marking the visit complete.',
+      'Check your work before leaving each room — no dust, streaks or missed areas.',
+      'Treat client homes and belongings with care and keep client info private.',
+      'Report any damage or issue immediately via Incident Report.',
+      'Keep your availability and service zone up to date.'
+    ].map(t=>`<div class="row" style="align-items:flex-start;margin-bottom:7px">
+        <span style="color:var(--green);font-weight:800">✓</span><span>${t}</span></div>`).join('')}
+  </div>
+
+  <h2 class="section">FAQs</h2>
+  ${faq('How and when do I get paid?','Submit one invoice each week (on Sunday for that week\'s work) with your total hours worked. Payments are issued biweekly by direct deposit, so keep your banking info up to date. Jobber is the official source of truth for hours worked.')}
+  ${faq('What are extra assignments?','Short-notice jobs, holidays, or work outside your usual zone, all paid at $27/hr. They appear in the Jobs tab to accept or decline. Your regular schedule is set by the office within your availability.')}
+  ${faq('Can I decline an assignment?','Yes — for any extra assignment in the Jobs tab, just hit Decline. Try to give as much notice as possible.')}
+  ${faq('How do I change my availability or zone?','Home → Availability. Set your days, the times you can work, and your Ottawa zones (including "Anywhere in Ottawa"). The office schedules you within this.')}
+  ${faq('What if something breaks or goes wrong?','File an Incident Report below right away. For urgent or insurance matters, use "Text a human" in Chat.')}
+
+  <h2 class="section">Platform policies</h2>
+  ${faq('When is my availability due?','Submit your availability weekly through the DRC Availability Form by Sunday at 11:59 PM for the following week. If your availability changes after submitting, let the admin team know as soon as possible. Missing submissions may mean no work is scheduled for that week.')}
+  ${faq('What areas does DRC serve?','Ottawa and Gatineau only. You choose your preferred service areas when you submit your weekly availability, and DRC makes reasonable efforts to schedule you within them.')}
+  ${faq('How are assignments scheduled?','Based on your submitted availability and preferred service areas. Assignments are added automatically to Jobber (not offered one by one) and are considered accepted unless you tell DRC otherwise — so review your Jobber account regularly.')}
+  ${faq('What if I\'m running late or have an emergency?','Notify the admin team immediately. DRC may contact the client on your behalf, or you can message them through Jobber. Always communicate promptly about lateness, cancellations, or availability issues.')}
+  ${faq('Do I charge HST?','Only if you are registered for HST — and you must provide your HST registration number to DRC. If you are not registered, do not charge HST. You are responsible for your own taxes and filings.')}
+  ${faq('Client cancellations & lockout fee','You are not paid for cancellations that happen before you arrive. If you arrive ready to work but can\'t get in, or the client cancels after you\'ve arrived, you may be eligible for a $25 lockout fee (DRC verifies eligibility).')}
+  ${faq('I can\'t get into the property (keys, alarm, access)','Contact the admin team immediately. Never force entry and never share alarm codes. When reasonably possible, don\'t leave the property until DRC tells you to.')}
+  ${faq('Appearance & conduct','Arrive clean, presentable, and ready to work, in modest clothing suitable for residential cleaning, with clean indoor footwear. Avoid strong odours (smoke, heavy perfume). No smoking, vaping, or working while impaired. Keep noise down (no out-loud music) and keep personal phone use minimal.')}
+  ${faq('Can I bring children or guests?','No. Children, family, friends, or other guests may not attend assignments without prior written approval from DRC.')}
+  ${faq('Quality, re-cleans & the satisfaction guarantee','Complete the full checklist — it\'s the minimum standard — and check your work before leaving each room. DRC offers a 72-hour satisfaction guarantee; if something was missed you may be asked for photos/notes or to do a re-clean.')}
+  ${faq('What if I can\'t safely complete a job?','Never put yourself in an unsafe situation. Report safety concerns, aggressive animals, or hazards immediately (with photos when possible) and DRC will advise on next steps.')}
+  ${faq('Using your own invoice system','You may use the DRC Invoice Submission Form or your own invoice system. If you use your own, email invoices to contact@donerightcleaning.ca. Each invoice should include your name, hours worked, total owing, and HST if you\'re registered.')}
+
+  <h2 class="section">Forms</h2>
+  <button class="btn primary" onclick="openIncident()">${svg('<path d="M12 9v4M12 17h.01M10.3 3.9L1.8 18a2 2 0 001.7 3h17a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z"/>')} File an incident report</button>
+  ${state.incidents.length?`<h2 class="section">Your past reports</h2>${state.incidents.slice().reverse().map(r=>`
+    <div class="card"><div class="spread"><h3 style="font-size:15px">${r.type}</h3><span class="pill gray">${r.date}</span></div>
+    <div class="muted">${r.where}</div><p style="margin:8px 0 0;font-size:14px">${r.desc}</p></div>`).join('')}`:''}
+  `;
+}
+function faq(q,a){ return `<details class="acc"><summary>${q} ${svg('<path d="M6 9l6 6 6-6"/>')}</summary><div class="accbody">${a}</div></details>`; }
+
+/* ---------- modals: availability + incident ---------- */
+function fmt12(v){
+  let [h,m]=v.split(':').map(Number);
+  const ap=h>=12?'PM':'AM';
+  let hh=h%12; if(hh===0)hh=12;
+  return hh+':'+String(m).padStart(2,'0')+' '+ap;
+}
+function timeOpts(sel){
+  let o='';
+  for(let h=9;h<=19;h++){ for(const m of ['00','30']){
+    if(h===19&&m==='30') continue;            // cap at 7:00 PM
+    const v=String(h).padStart(2,'0')+':'+m;
+    o+=`<option value="${v}" ${v===sel?'selected':''}>${fmt12(v)}</option>`;
+  }}
+  return o;
+}
+function copyPrevWeek(){
+  const me=state.contractors.find(x=>x.id===state.me.id);
+  const wks=weekStarts();
+  if(availWeek===0){ toast('This is the first week'); return; }
+  me.avail[wks[availWeek]]=clone(me.avail[wks[availWeek-1]]);
+  openAvail(); toast('Copied from previous week');
+}
+function openAvail(){
+  const me=state.contractors.find(x=>x.id===state.me.id);
+  const days=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  const allZones=['Westboro','Hintonburg','Kanata','Orleans','Vanier','Beacon Hill','Barrhaven',
+    'Riverside South','Centretown','The Glebe','Old Ottawa South','Nepean','Bells Corners','Stittsville','Downtown'];
+  const anywhere=me.zones.includes('Anywhere in Ottawa');
+  const wks=weekStarts();
+  if(availWeek>3||availWeek<0) availWeek=0;
+  const wk=me.avail[wks[availWeek]]||{};
+  sheet(`
+    <button class="closex" onclick="closeSheet()">×</button>
+    <h3>Availability & service zone</h3>
+    <div class="notice">Set your availability for any of the next 4 weeks. The office schedules your work within it — keep it current.</div>
+    <strong style="font-size:13px;color:#334155">Pick a week</strong>
+    <div class="zonechips" style="margin:8px 0 14px">${wks.map((ws,i)=>`
+      <span class="chip" style="cursor:pointer;padding:7px 11px;${i===availWeek?'background:var(--teal);color:#fff':''}"
+        onclick="setAvailWeek(${i})">${i===0?'This week · ':(i===1?'Next week · ':'')}${weekLabel(ws)}</span>`).join('')}</div>
+    ${availWeek>0?`<button class="btn ghost sm" style="margin-bottom:10px" onclick="copyPrevWeek()">${svg('<path d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2"/><rect x="8" y="8" width="12" height="12" rx="2"/>')} Copy previous week</button>`:''}
+    <strong style="font-size:13px;color:#334155">Which days &amp; times can you work?</strong>
+    <div style="margin-top:8px">${days.map(d=>{
+      const a=wk[d];
+      return `<div class="dayrow"><span class="dayname">${d}</span>
+        ${a?`<div class="timesel">
+          <select onchange="setTime('${d}','from',this.value)">${timeOpts(a.from)}</select>
+          <span class="muted">–</span>
+          <select onchange="setTime('${d}','to',this.value)">${timeOpts(a.to)}</select>
+        </div>`:`<span class="muted" style="margin-left:auto;margin-right:10px">Unavailable</span>`}
+        <div class="switch ${a?'on':''}" id="sw_${d}" onclick="toggleDay('${d}')"><i></i></div></div>`;}).join('')}</div>
+    <label style="margin-top:18px">Service zones (tap to toggle)</label>
+    <div class="zonechips" id="zonePick" style="margin-top:8px">
+      <span class="chip" style="cursor:pointer;font-weight:800;${anywhere?'background:var(--teal);color:#fff':'background:#dceaf6;color:#045ea9'}"
+        onclick="toggleZone('Anywhere in Ottawa')" id="z_AnywhereinOttawa">📍 Anywhere in Ottawa</span>
+      ${allZones.map(z=>`
+      <span class="chip" style="cursor:pointer;${me.zones.includes(z)?'background:var(--teal);color:#fff':''}${anywhere?'opacity:.4;pointer-events:none':''}"
+        onclick="toggleZone('${z}')" id="z_${z.replace(/\s/g,'')}">${z}</span>`).join('')}</div>
+    <button class="btn primary" style="margin-top:20px" onclick="saveAvail()">Save</button>
+  `);
+}
+function setAvailWeek(i){ availWeek=i; openAvail(); }
+function curWeekAvail(){ const me=state.contractors.find(x=>x.id===state.me.id); return me.avail[weekStarts()[availWeek]]; }
+function toggleDay(d){ const wk=curWeekAvail();
+  wk[d]=wk[d]?0:{from:'09:00',to:'17:00'}; openAvail(); }
+function setTime(d,which,v){ const wk=curWeekAvail();
+  if(wk[d]) wk[d][which]=v; }
+function toggleZone(z){ const me=state.contractors.find(x=>x.id===state.me.id);
+  if(z==='Anywhere in Ottawa'){
+    me.zones = me.zones.includes(z) ? [] : ['Anywhere in Ottawa'];
+  } else {
+    if(me.zones.includes('Anywhere in Ottawa')) return;
+    const i=me.zones.indexOf(z);
+    if(i>=0)me.zones.splice(i,1); else me.zones.push(z);
+  }
+  openAvail();
+}
+function saveAvail(){ closeSheet(); toast('Availability updated ✓'); render(); }
+
+function openIncident(){
+  sheet(`
+    <button class="closex" onclick="closeSheet()">×</button>
+    <h3>Incident report</h3>
+    <label>Type of incident</label>
+    <select id="incType">
+      <option>Property damage</option><option>Injury</option><option>Client complaint</option>
+      <option>Safety hazard</option><option>Supplies / equipment issue</option><option>Other</option>
+    </select>
+    <label>Where did it happen?</label>
+    <input id="incWhere" placeholder="Client name / address">
+    <label>Date</label>
+    <input id="incDate" type="date">
+    <label>What happened?</label>
+    <textarea id="incDesc" placeholder="Describe the incident in detail…"></textarea>
+    <button class="btn primary" style="margin-top:16px" onclick="submitIncident()">Submit report</button>
+    <p class="muted" style="text-align:center;margin-top:10px">For emergencies call 911 first, then file this.</p>
+  `);
+}
+function submitIncident(){
+  const type=val('incType'),where=val('incWhere'),date=val('incDate')||new Date().toISOString().slice(0,10),desc=val('incDesc');
+  if(!where||!desc){ toast('Add location and description'); return; }
+  state.incidents.push({id:'inc'+Date.now(),type,where,date,desc});
+  closeSheet(); toast('Incident report submitted ✓'); render();
+}
+
+/* ============================================================
+   ADMIN VIEWS
+   ============================================================ */
+function setAdminTab(t){ adminTab=t; render(); }
+function renderAdmin(){
+  const c=document.getElementById('content');
+  if(activeAdminChat){ c.innerHTML=adminChatView(); scrollChat(); return; }
+  const unpaid=state.invoices.filter(i=>!i.paid).length;
+  const nav=`<div class="btnrow" style="margin-bottom:14px">
+    <button class="btn ${adminTab==='dashboard'?'primary':'ghost'}" onclick="setAdminTab('dashboard')">Dashboard</button>
+    <button class="btn ${adminTab==='invoices'?'primary':'ghost'}" onclick="setAdminTab('invoices')">Invoices${unpaid?` · ${unpaid}`:''}</button>
+  </div>`;
+  c.innerHTML = nav + (adminTab==='invoices' ? adminInvoicesView() : adminDashboard());
+}
+function adminDashboard(){
+  return `
+  <h2 class="section">Overview</h2>
+  <div class="statgrid">
+    <div class="stat"><div class="n">${state.contractors.filter(c=>c.status==='Active').length}</div><div class="l">Active contractors</div></div>
+    <div class="stat"><div class="n">${state.adminChats.filter(c=>c.unread).length}</div><div class="l">Chats need a human</div></div>
+    <div class="stat"><div class="n">${state.premiumOffers.filter(o=>o.status==='pending').length}</div><div class="l">Open extra assignments</div></div>
+    <div class="stat"><div class="n">${state.invoices.filter(i=>!i.paid).length}</div><div class="l">Invoices to pay</div></div>
+  </div>
+
+  <div class="spread"><h2 class="section">Support inbox</h2></div>
+  ${state.adminChats.map(ch=>`
+    <div class="card spread" style="cursor:pointer" onclick="openAdminChat('${ch.id}')">
+      <div class="row"><div class="avatar ${ch.cls}">${ch.initials}</div>
+        <div style="min-width:0"><h3 style="font-size:15px;margin:0">${ch.contractor}</h3>
+          <div class="muted" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:210px">${ch.last}</div></div></div>
+      ${ch.unread?`<span class="pill red">New</span>`:`<span class="pill gray">Open</span>`}
+    </div>`).join('')}
+
+  <div class="spread"><h2 class="section">Extra assignments</h2></div>
+  <button class="btn primary" onclick="openOfferJob()">${svg('<path d="M12 5v14M5 12h14"/>')} Offer an extra assignment</button>
+  ${state.premiumOffers.length?`<div style="margin-top:12px">${state.premiumOffers.map(o=>{
+    const c=state.contractors.find(x=>x.id===o.to);
+    return `<div class="card"><div class="spread"><h3 style="font-size:15px">${o.client}</h3>
+      <span class="pill ${o.status==='pending'?'amber':(o.status==='accepted'?'green':'gray')}">${o.status}</span></div>
+      <div class="muted">${o.date} · ${o.pay} → offered to ${c?c.name:'?'}</div></div>`;}).join('')}</div>`:''}
+
+  <h2 class="section">Scheduling board — availability & zones</h2>
+  <p class="muted" style="margin-top:-4px">Everyone's availability for the selected week.</p>
+  <div class="zonechips" style="margin-bottom:10px">${weekStarts().map((ws,i)=>`
+    <span class="chip" style="cursor:pointer;padding:7px 11px;${i===adminWeek?'background:var(--teal);color:#fff':''}"
+      onclick="setAdminWeek(${i})">${i===0?'This week · ':(i===1?'Next week · ':'')}${weekLabel(ws)}</span>`).join('')}</div>
+  ${state.contractors.map(adminContractorCard).join('')}
+  `;
+}
+function setInvFilter(f){ invFilter=f; render(); }
+function adminInvoicesView(){
+  const all=state.invoices.slice().reverse();
+  const list = invFilter==='all'?all : all.filter(i=> invFilter==='paid'? i.paid : !i.paid);
+  const unpaidTotal=state.invoices.filter(i=>!i.paid).reduce((s,i)=>s+Number(i.hours||0)+Number(i.premiumHours||0),0);
+  return `
+  <h2 class="section">Weekly invoices</h2>
+  <div class="notice">Tap <strong>Mark paid</strong> once you've sent a contractor's direct deposit. ${unpaidTotal?`<strong>${unpaidTotal} hrs</strong> awaiting payment.`:'All caught up 🎉'}</div>
+  <div class="zonechips" style="margin-bottom:12px">
+    ${[['unpaid','Unpaid'],['paid','Paid'],['all','All']].map(([f,l])=>`
+      <span class="chip" style="cursor:pointer;padding:7px 12px;${invFilter===f?'background:var(--teal);color:#fff':''}"
+        onclick="setInvFilter('${f}')">${l}</span>`).join('')}
+  </div>
+  ${list.length?list.map(adminInvoiceCard).join('')
+    :`<div class="card muted">No ${invFilter==='all'?'':invFilter+' '}invoices.</div>`}
+  `;
+}
+function setAdminWeek(i){ adminWeek=i; render(); }
+function adminInvoiceCard(inv){
+  const c=state.contractors.find(x=>x.id===inv.contractorId);
+  const range=inv.start&&inv.end?`${inv.start} → ${inv.end}`:'';
+  const prem=inv.premiumHours?` · <span style="color:var(--amber)">${inv.premiumHours} premium</span>`:'';
+  return `<div class="card">
+    <div class="spread"><h3 style="font-size:15px;margin:0">${inv.contractor||(c?c.name:'Contractor')}</h3>
+      <span class="pill ${inv.paid?'green':'amber'}">${inv.paid?'✓ Paid':'Unpaid'}</span></div>
+    <div class="muted" style="margin-top:3px">Week ${range}</div>
+    <div class="row" style="margin-top:5px;gap:8px"><span class="pill blue">${(Number(inv.hours||0)+Number(inv.premiumHours||0))} hrs total</span>
+      <span class="muted">${inv.hours||0} regular${prem}</span></div>
+    <div style="margin-top:10px;background:#f8fafc;border:1px solid var(--line);border-radius:10px;padding:9px 11px;font-size:13px">
+      <span style="font-weight:600">📝 Notes:</span> ${inv.notes?inv.notes:'<span class="muted">No notes left</span>'}
+    </div>
+    <button class="btn ${inv.paid?'ghost':'green'} sm" style="width:100%;margin-top:12px" onclick="togglePaid('${inv.id}')">
+      ${inv.paid?'Mark unpaid':'Mark paid'}</button>
+  </div>`;
+}
+function togglePaid(id){ const inv=state.invoices.find(x=>x.id===id); if(!inv)return;
+  inv.paid=!inv.paid; inv.status=inv.paid?'Paid':'Submitted';
+  toast(inv.paid?'Marked paid ✓':'Marked unpaid'); render();
+}
+function adminContractorCard(c){
+  const days=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  const wk=(c.avail&&c.avail[weekStarts()[adminWeek]])||{};
+  const times=days.filter(d=>wk[d]).map(d=>`${d} ${fmt12(wk[d].from)}–${fmt12(wk[d].to)}`).join(' · ')||'No days set this week';
+  return `<div class="card">
+    <div class="row"><div class="avatar ${c.cls}">${c.initials}</div>
+      <div style="flex:1"><div class="spread"><h3 style="font-size:15px;margin:0">${c.name}</h3>
+        <span class="pill ${c.status==='Active'?'green':'gray'}">${c.status}</span></div></div></div>
+    <div class="zonechips">${c.zones.length?c.zones.map(z=>`<span class="chip">${z}</span>`).join(''):'<span class="chip">No zone set</span>'}</div>
+    <div class="availbar">${days.map(d=>`<span class="${wk[d]?'a':''}">${d[0]}</span>`).join('')}</div>
+    <div class="muted" style="font-size:11.5px;margin-top:7px">${times}</div>
+  </div>`;
+}
+
+function openAdminChat(id){ activeAdminChat=id;
+  const ch=state.adminChats.find(c=>c.id===id); if(ch)ch.unread=false; render(); }
+function adminChatView(){
+  const ch=state.adminChats.find(c=>c.id===activeAdminChat);
+  return `
+  <div class="row" style="margin-bottom:10px"><button class="btn ghost sm" onclick="closeAdminChat()">‹ Inbox</button>
+    <div class="row"><div class="avatar ${ch.cls}">${ch.initials}</div><strong>${ch.contractor}</strong></div></div>
+  <div class="chatwrap">
+    <div class="chatlog" id="chatlog">${ch.log.map(m=>{
+      const cls=m.from==='admin'?'me':(m.from==='bot'?'bot':'admin');
+      const who=m.from==='bot'?'<div class="msgmeta">AI assistant</div>':(m.from==='me'?`<div class="msgmeta">${ch.contractor}</div>`:'');
+      return `${who}<div class="msg ${cls}">${m.text}</div>`;}).join('')}</div>
+    <div class="chatinput">
+      <input id="adminField" placeholder="Reply to ${ch.contractor.split(' ')[0]}…" onkeydown="if(event.key==='Enter')adminSend()">
+      <button class="iconbtn" onclick="adminSend()">${svg(ICON.send)}</button>
+    </div>
+  </div>`;
+}
+function adminSend(){
+  const f=document.getElementById('adminField'); const t=f.value.trim(); if(!t)return;
+  const ch=state.adminChats.find(c=>c.id===activeAdminChat);
+  ch.log.push({from:'admin',text:t,t:Date.now()}); ch.last='You: '+t; f.value='';
+  render(); scrollChat(); toast('Reply sent to contractor');
+}
+function closeAdminChat(){ activeAdminChat=null; render(); }
+
+function openOfferJob(){
+  sheet(`
+    <button class="closex" onclick="closeSheet()">×</button>
+    <h3>Offer an extra assignment</h3>
+    <label>Job / client</label><input id="ojClient" placeholder="e.g. Hampton Inn — lobby">
+    <label>Date & time</label><input id="ojDate" placeholder="e.g. Sat Jun 27, 8:00 AM">
+    <label>Address</label><input id="ojAddr" placeholder="Street, neighbourhood">
+    <label>Pay</label><input id="ojPay" value="$27/hr">
+    <label>Why is it an extra assignment?</label>
+    <div id="ojReasons" style="margin-top:8px">
+      ${['Short notice','Holiday','Outside service zone'].map(r=>`
+        <div class="checkrow" onclick="this.classList.toggle('sel')"><span class="cb">✓</span>${r}</div>`).join('')}
+    </div>
+    <div class="divider"></div>
+    <label>Offer to which contractor(s)?</label>
+    <div id="ojWho" style="margin-top:8px">
+      ${state.contractors.map(c=>`
+        <div class="checkrow" data-id="${c.id}" onclick="this.classList.toggle('sel')">
+          <span class="cb">✓</span>
+          <div class="avatar ${c.cls}" style="width:30px;height:30px;font-size:12px">${c.initials}</div>
+          <div><strong>${c.name}</strong><div class="muted" style="font-size:11px">${c.zones.join(', ')}</div></div>
+        </div>`).join('')}
+    </div>
+    <button class="btn primary" style="margin-top:16px" onclick="sendOffer()">Send offer</button>
+  `);
+}
+function sendOffer(){
+  const client=val('ojClient'),date=val('ojDate'),addr=val('ojAddr'),pay=val('ojPay');
+  if(!client||!date||!pay){ toast('Add client, date and pay'); return; }
+  const reasons=[...document.querySelectorAll('#ojReasons .checkrow.sel')].map(e=>e.textContent.trim());
+  const who=[...document.querySelectorAll('#ojWho .checkrow.sel')].map(e=>e.dataset.id);
+  if(!who.length){ toast('Pick at least one contractor'); return; }
+  who.forEach(id=>{
+    const offer={id:'p'+Date.now()+id,to:id,client,date,pay,reasons:reasons.length?reasons:['Extra assignment'],addr,status:'pending'};
+    state.premiumOffers.push(offer);
+  });
+  closeSheet();
+  toast(`Offer sent to ${who.length} contractor${who.length>1?'s':''} ✓`);
+  render();
+}
+
+/* ---------- sheet/modal plumbing ---------- */
+function sheet(html){ document.getElementById('sheet').innerHTML=html; document.getElementById('modal').classList.add('on'); }
+function closeSheet(){ document.getElementById('modal').classList.remove('on'); }
+document.getElementById('modal').addEventListener('click',e=>{ if(e.target.id==='modal')closeSheet(); });
+
+/* ---------- utils ---------- */
+function val(id){ const e=document.getElementById(id); return e?e.value.trim():''; }
+
+/* ---------- boot ---------- */
+render();
+</script>
+</body>
+</html>
