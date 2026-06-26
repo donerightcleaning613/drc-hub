@@ -256,12 +256,12 @@ async function sbLoadAll(){
   if(error || !prof){ toast('Could not load your profile'); return false; }
   const isAdmin = prof.role === 'admin';
   session = { role:prof.role, name:prof.full_name||user.email, id:user.id };
-  state.me = { id:user.id, name:prof.full_name||user.email, initials:prof.initials||initialsOf(prof.full_name||user.email) };
+  state.me = { id:user.id, name:prof.full_name||user.email, initials:initialsOf(prof.full_name||user.email) };
 
   // admins see the list of CONTRACTORS only (not other admins); contractors see just themselves
   let profs = isAdmin ? ((await sb.from('profiles').select('*').eq('role','contractor').order('full_name')).data || []) : [prof];
   state.contractors = profs.map((p,i)=>({
-    id:p.id, name:p.full_name||'Contractor', initials:p.initials||initialsOf(p.full_name),
+    id:p.id, name:p.full_name||'Contractor', initials:initialsOf(p.full_name||'Contractor'),
     cls:CLS[i%CLS.length], zones:p.zones||[], status:p.status||'Active', avail:{}, template:{}
   }));
 
@@ -356,6 +356,7 @@ let adminWeek = 0;     // which week the admin scheduling board is viewing
 let adminTab = 'dashboard';   // 'dashboard' | 'invoices'
 let invFilter = 'unpaid';     // 'all' | 'unpaid' | 'paid'
 let session = loadSession();  // {role,name} or null when logged out
+let authMode = 'login';       // 'login' | 'signup'
 
 /* ---------- week helpers (availability for the next month) ---------- */
 function isoDate(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
@@ -406,27 +407,60 @@ async function tryLogin(){
 }
 async function logout(){ if(ONLINE){ try{ await sb.auth.signOut(); }catch(e){} }
   session=null; saveSession(); ctab='home'; adminTab='dashboard'; render(); }
+function setAuthMode(m){ authMode=m; renderLogin(); }
 function renderLogin(){
+  const signup = authMode==='signup';
   document.getElementById('content').innerHTML=`
   <div class="loginwrap">
     <div class="loginbrand">
       <div class="blogo">${CONFIG.COMPANY}</div>
       <h2>${CONFIG.COMPANY} ${CONFIG.BRAND}</h2>
-      <p>Sign in to your account</p>
+      <p>${signup?'Create your contractor account':'Sign in to your account'}</p>
     </div>
-    <label>Email</label>
-    <input id="loginEmail" type="email" placeholder="you@example.com" autocomplete="username">
-    <label>Password</label>
-    <input id="loginPass" type="password" placeholder="••••••••" autocomplete="current-password"
-      onkeydown="if(event.key==='Enter')tryLogin()">
-    <button class="btn primary" style="margin-top:18px" onclick="tryLogin()">Log in</button>
-    ${ONLINE?'':`
-    <div class="demohint">Demo — tap a role to preview (real logins come with the backend):</div>
-    <div class="btnrow">
-      <button class="btn ghost" onclick="login('contractor')">Contractor view</button>
-      <button class="btn ghost" onclick="login('admin')">Admin view</button>
-    </div>`}
+    ${signup?`
+      <div class="btnrow">
+        <div style="flex:1"><label>First name</label><input id="suFirst" placeholder="First"></div>
+        <div style="flex:1"><label>Last name</label><input id="suLast" placeholder="Last"></div>
+      </div>
+      <label>Email</label>
+      <input id="loginEmail" type="email" placeholder="you@example.com" autocomplete="username">
+      <label>Password</label>
+      <input id="loginPass" type="password" placeholder="At least 6 characters" autocomplete="new-password">
+      <button class="btn primary" style="margin-top:18px" onclick="signUp()">Create account</button>
+      <div class="demohint">Already have an account?
+        <a href="#" onclick="setAuthMode('login');return false" style="color:var(--teal);font-weight:600">Log in</a></div>
+    `:`
+      <label>Email</label>
+      <input id="loginEmail" type="email" placeholder="you@example.com" autocomplete="username">
+      <label>Password</label>
+      <input id="loginPass" type="password" placeholder="••••••••" autocomplete="current-password"
+        onkeydown="if(event.key==='Enter')tryLogin()">
+      <button class="btn primary" style="margin-top:18px" onclick="tryLogin()">Log in</button>
+      ${ONLINE?`<div class="demohint">New contractor?
+        <a href="#" onclick="setAuthMode('signup');return false" style="color:var(--teal);font-weight:600">Create an account</a></div>`:`
+      <div class="demohint">Demo — tap a role to preview:</div>
+      <div class="btnrow">
+        <button class="btn ghost" onclick="login('contractor')">Contractor view</button>
+        <button class="btn ghost" onclick="login('admin')">Admin view</button>
+      </div>`}
+    `}
   </div>`;
+}
+async function signUp(){
+  const first=val('suFirst'), last=val('suLast'), email=val('loginEmail'), pass=val('loginPass');
+  if(!first||!last){ toast('Please enter your first and last name'); return; }
+  if(!email||!pass){ toast('Enter an email and password'); return; }
+  if(!ONLINE){ toast('Sign-up needs the live database'); return; }
+  toast('Creating your account…');
+  const { data, error } = await sb.auth.signUp({ email, password:pass,
+    options:{ data:{ full_name:(first+' '+last).trim() } } });
+  if(error){ toast('Sign-up failed: '+error.message); return; }
+  if(data && data.session){          // email confirmation off → straight in
+    const ok=await sbLoadAll(); if(ok){ ctab='home'; render(); }
+  } else {                           // email confirmation on → must verify first
+    toast('Account created! Check your email to confirm, then log in.');
+    setAuthMode('login');
+  }
 }
 
 /* ---------- nav ---------- */
