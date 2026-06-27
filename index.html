@@ -319,6 +319,12 @@ async function sbLoadAll(){
     state.chat = msgs.map(m=>({from:m.sender==='contractor'?'me':m.sender,text:m.body,t:new Date(m.created_at).getTime()}));
     if(state.chat.length===0) state.chat=[{from:'bot',text:BOT_GREETING,t:Date.now()}];
   }
+
+  if(isAdmin){
+    const ns = (await sb.from('notifications').select('*').order('created_at',{ascending:false})).data || [];
+    state.notifications = ns.map(n=>({id:n.id,type:n.type,contractor:n.contractor_name,
+      summary:n.summary,details:n.details||[],read:!!n.read,t:new Date(n.created_at).getTime()}));
+  } else { state.notifications = null; }
   return true;
 }
 // fire-and-forget write with an error toast on failure
@@ -380,6 +386,8 @@ let adminTab = 'dashboard';   // 'dashboard' | 'invoices'
 let invFilter = 'unpaid';     // 'all' | 'unpaid' | 'paid'
 let session = loadSession();  // {role,name} or null when logged out
 let authMode = 'login';       // 'login' | 'signup'
+let availSnapshot = null;      // availability before an edit (to build change breakdowns)
+let availSnapshotZones = null;
 
 /* ---------- week helpers (availability for the next month) ---------- */
 function isoDate(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
@@ -657,8 +665,13 @@ function submitInvoice(){
   const inv={id:'i'+Date.now(),contractorId:state.me.id,contractor:me?me.name:'',
     start,end,hours,premiumHours,notes,submittedAt:new Date().toISOString(),paid:false,status:'Submitted'};
   state.invoices.push(inv);
-  if(ONLINE) sbDo(sb.from('invoices').insert({contractor_id:state.me.id,contractor_name:me?me.name:'',
-    week_start:start,week_end:end,hours,premium_hours:premiumHours,notes,paid:false}));
+  if(ONLINE){
+    sbDo(sb.from('invoices').insert({contractor_id:state.me.id,contractor_name:me?me.name:'',
+      week_start:start,week_end:end,hours,premium_hours:premiumHours,notes,paid:false}));
+    sbDo(sb.from('notifications').insert({contractor_id:state.me.id,contractor_name:me?me.name:'',
+      type:'invoice', summary:`${me?me.name:'A contractor'} submitted a weekly invoice`,
+      details:[`Week ${start} → ${end}`, `${hours} regular hrs`+(premiumHours?` · ${premiumHours} premium hrs`:''), notes?('Notes: '+notes):'No notes']}));
+  }
   emailInvoice(inv);
   toast('Invoice saved — opening your email to send ✓'); render();
 }
@@ -822,6 +835,9 @@ function copyPrevWeek(){
 }
 function openAvail(){
   const me=state.contractors.find(x=>x.id===state.me.id);
+  if(!document.getElementById('modal').classList.contains('on')){
+    availSnapshot = clone(me.avail); availSnapshotZones = clone(me.zones);   // capture "before" once
+  }
   const days=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
   const allZones=['Westboro','Hintonburg','Kanata','Orleans','Vanier','Beacon Hill','Barrhaven',
     'Riverside South','Centretown','The Glebe','Old Ottawa South','Nepean','Bells Corners','Stittsville','Downtown'];
@@ -883,8 +899,36 @@ function saveAvail(){
         {onConflict:'contractor_id,week_start'}));
     });
     sbDo(sb.from('profiles').update({zones:me.zones}).eq('id',state.me.id));
+    const changes = [...availDiff(availSnapshot, me.avail), ...zonesDiff(availSnapshotZones, me.zones)];
+    if(changes.length){
+      sbDo(sb.from('notifications').insert({contractor_id:state.me.id, contractor_name:me.name,
+        type:'availability', summary:`${me.name} updated their availability (${changes.length} change${changes.length>1?'s':''})`,
+        details:changes}));
+    }
   }
   closeSheet(); toast('Availability updated ✓'); render();
+}
+function availDiff(before, after){
+  const days=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  const fmt=x=>x?`${fmt12(x.from)}–${fmt12(x.to)}`:'';
+  const out=[];
+  weekStarts().forEach(ws=>{
+    const b=(before&&before[ws])||{}, a=(after&&after[ws])||{};
+    days.forEach(d=>{
+      const bd=b[d], ad=a[d];
+      if(!bd && ad) out.push(`${weekLabel(ws)} · ${d}: now available ${fmt(ad)}`);
+      else if(bd && !ad) out.push(`${weekLabel(ws)} · ${d}: now unavailable`);
+      else if(bd && ad && (bd.from!==ad.from || bd.to!==ad.to)) out.push(`${weekLabel(ws)} · ${d}: ${fmt(bd)} → ${fmt(ad)}`);
+    });
+  });
+  return out;
+}
+function zonesDiff(before, after){
+  const b=before||[], a=after||[], out=[];
+  const added=a.filter(z=>!b.includes(z)), removed=b.filter(z=>!a.includes(z));
+  if(added.length) out.push('Added zones: '+added.join(', '));
+  if(removed.length) out.push('Removed zones: '+removed.join(', '));
+  return out;
 }
 
 function openIncident(){
@@ -922,13 +966,16 @@ function renderAdmin(){
   const c=document.getElementById('content');
   if(activeAdminChat){ c.innerHTML=adminChatView(); scrollChat(); return; }
   const unpaid=state.invoices.filter(i=>!i.paid).length;
-  const nav=`<div class="btnrow" style="margin-bottom:14px">
-    <button class="btn ${adminTab==='dashboard'?'primary':'ghost'}" onclick="setAdminTab('dashboard')">Dashboard</button>
-    <button class="btn ${adminTab==='invoices'?'primary':'ghost'}" onclick="setAdminTab('invoices')">Invoices${unpaid?` · ${unpaid}`:''}</button>
-    <button class="btn ${adminTab==='team'?'primary':'ghost'}" onclick="setAdminTab('team')">Team</button>
+  const newNotifs = (state.notifications||[]).filter(n=>!n.read).length;
+  const nav=`<div class="btnrow" style="margin-bottom:14px;flex-wrap:wrap">
+    <button class="btn ${adminTab==='dashboard'?'primary':'ghost'}" style="padding:10px 6px;font-size:13px" onclick="setAdminTab('dashboard')">Dashboard</button>
+    <button class="btn ${adminTab==='invoices'?'primary':'ghost'}" style="padding:10px 6px;font-size:13px" onclick="setAdminTab('invoices')">Invoices${unpaid?` · ${unpaid}`:''}</button>
+    <button class="btn ${adminTab==='team'?'primary':'ghost'}" style="padding:10px 6px;font-size:13px" onclick="setAdminTab('team')">Team</button>
+    <button class="btn ${adminTab==='notifications'?'primary':'ghost'}" style="padding:10px 6px;font-size:13px" onclick="setAdminTab('notifications')">Alerts${newNotifs?` · ${newNotifs}`:''}</button>
   </div>`;
-  const body = adminTab==='invoices' ? adminInvoicesView()
-             : adminTab==='team'     ? adminTeamView()
+  const body = adminTab==='invoices'      ? adminInvoicesView()
+             : adminTab==='team'          ? adminTeamView()
+             : adminTab==='notifications' ? adminNotificationsView()
              : adminDashboard();
   c.innerHTML = nav + body;
 }
@@ -1049,6 +1096,39 @@ async function restoreUser(id){
     if(error){ toast('Restore failed: '+error.message); return; }
     toast('User restored ✓'); await sbRefresh();
   } else { m.status='Active'; toast('User restored (demo)'); render(); }
+}
+function timeAgo(t){
+  const s=Math.floor((Date.now()-t)/1000);
+  if(s<60) return 'just now';
+  const m=Math.floor(s/60); if(m<60) return m+' min ago';
+  const h=Math.floor(m/60); if(h<24) return h+' hr ago';
+  const d=Math.floor(h/24); return d+' day'+(d>1?'s':'')+' ago';
+}
+function adminNotificationsView(){
+  const ns = state.notifications||[];
+  if(ns.some(n=>!n.read)) setTimeout(markNotificationsRead, 60);
+  return `
+  <h2 class="section">Notifications</h2>
+  <div class="notice">When a contractor updates their availability or submits an invoice it shows here. Tap one to see the details.</div>
+  ${ns.length?ns.map(n=>`
+    <details class="acc">
+      <summary>
+        <span>${n.type==='invoice'?'🧾':'📅'} ${n.summary}${n.read?'':' <span class="pill red" style="margin-left:4px">New</span>'}</span>
+        ${svg('<path d="M6 9l6 6 6-6"/>')}
+      </summary>
+      <div class="accbody">
+        <div class="muted" style="margin-bottom:6px">${timeAgo(n.t)}</div>
+        ${(n.details||[]).map(d=>`<div style="padding:3px 0">• ${d}</div>`).join('')||'<div class="muted">No further details.</div>'}
+      </div>
+    </details>`).join(''):`<div class="card muted">No notifications yet.</div>`}
+  `;
+}
+async function markNotificationsRead(){
+  const unread=(state.notifications||[]).filter(n=>!n.read);
+  if(!unread.length) return;
+  unread.forEach(n=>n.read=true);
+  if(ONLINE){ try{ await sb.from('notifications').update({read:true}).eq('read',false); }catch(e){} }
+  render();
 }
 function adminInvoiceCard(inv){
   const c=state.contractors.find(x=>x.id===inv.contractorId);
