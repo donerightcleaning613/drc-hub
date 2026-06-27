@@ -232,7 +232,15 @@ const CONFIG = {
 /* ---------- Supabase client (online when configured) ---------- */
 const ONLINE = !!(window.supabase && CONFIG.SUPABASE_URL && CONFIG.SUPABASE_ANON_KEY
                   && !CONFIG.SUPABASE_ANON_KEY.startsWith('PASTE_'));
-const sb = ONLINE ? window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY) : null;
+// "Keep me logged in": localStorage persists across browser restarts; sessionStorage clears on close.
+function makeClient(keep){
+  return window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY, {
+    auth:{ persistSession:true, autoRefreshToken:true,
+           storage: keep ? window.localStorage : window.sessionStorage }
+  });
+}
+let keepPref = true; try{ keepPref = localStorage.getItem('drcKeep') !== 'false'; }catch(e){}
+let sb = ONLINE ? makeClient(keepPref) : null;
 const CLS = ['','b','c','d','e'];
 function initialsOf(name){ return (name||'?').split(/\s+/).map(w=>w[0]).join('').slice(0,2).toUpperCase(); }
 const BOT_GREETING = "Hi 👋 I'm the DRC assistant. Ask me anything — pay, scheduling, extra assignments, or how to submit your weekly invoice. If I can't help, you can reach a real person.";
@@ -264,7 +272,8 @@ async function sbLoadAll(){
     toast('Your account has been deactivated — please contact the office.'); return false; }
   const isAdmin = prof.role === 'admin';
   session = { role:prof.role, name:prof.full_name||user.email, id:user.id };
-  session.needsName = !(prof.full_name && prof.full_name.trim());
+  const _nm=(prof.full_name||'').trim();
+  session.needsName = !_nm || _nm.includes('@');   // treat an email-as-name as "no name yet"
   state.me = { id:user.id, name:prof.full_name||user.email, initials:initialsOf(prof.full_name||user.email) };
 
   // admins load everyone, then split into contractors (scheduling board) + full team (role mgmt)
@@ -410,6 +419,9 @@ async function tryLogin(){
   const e=val('loginEmail'), p=val('loginPass');
   if(!e||!p){ toast('Enter your email and password'); return; }
   if(ONLINE){
+    const keep = document.getElementById('keepLogged') ? document.getElementById('keepLogged').checked : true;
+    try{ localStorage.setItem('drcKeep', keep?'true':'false'); }catch(_){}
+    keepPref = keep; sb = makeClient(keep);   // use the chosen persistence for this sign-in
     toast('Signing in…');
     const { error } = await sb.auth.signInWithPassword({ email:e, password:p });
     if(error){ toast('Login failed: '+error.message); return; }
@@ -477,7 +489,10 @@ function renderLogin(){
       <label>Password</label>
       <input id="loginPass" type="password" placeholder="••••••••" autocomplete="current-password"
         onkeydown="if(event.key==='Enter')tryLogin()">
-      <button class="btn primary" style="margin-top:18px" onclick="tryLogin()">Log in</button>
+      <label style="display:flex;align-items:center;gap:8px;margin-top:14px;font-weight:400;cursor:pointer">
+        <input type="checkbox" id="keepLogged" ${keepPref?'checked':''} style="width:18px;height:18px;padding:0;margin:0"> Keep me logged in
+      </label>
+      <button class="btn primary" style="margin-top:14px" onclick="tryLogin()">Log in</button>
       ${ONLINE?`<div class="demohint">New contractor?
         <a href="#" onclick="setAuthMode('signup');return false" style="color:var(--teal);font-weight:600">Create an account</a></div>`:`
       <div class="demohint">Demo — tap a role to preview:</div>
