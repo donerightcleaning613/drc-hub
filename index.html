@@ -264,6 +264,7 @@ async function sbLoadAll(){
     toast('Your account has been deactivated — please contact the office.'); return false; }
   const isAdmin = prof.role === 'admin';
   session = { role:prof.role, name:prof.full_name||user.email, id:user.id };
+  session.needsName = !(prof.full_name && prof.full_name.trim());
   state.me = { id:user.id, name:prof.full_name||user.email, initials:initialsOf(prof.full_name||user.email) };
 
   // admins load everyone, then split into contractors (scheduling board) + full team (role mgmt)
@@ -413,13 +414,41 @@ async function tryLogin(){
     const { error } = await sb.auth.signInWithPassword({ email:e, password:p });
     if(error){ toast('Login failed: '+error.message); return; }
     const ok = await sbLoadAll();
-    if(ok){ if(session.role==='admin') adminTab='dashboard'; else ctab='home'; render(); }
+    if(ok){ if(session.role==='admin') adminTab='dashboard'; else ctab='home'; render(); if(session.needsName) openNameSetup(); }
   } else {
     login(e.toLowerCase().includes('admin')||e.toLowerCase().includes('office')?'admin':'contractor');
   }
 }
 async function logout(){ if(ONLINE){ try{ await sb.auth.signOut(); }catch(e){} }
   session=null; saveSession(); ctab='home'; adminTab='dashboard'; render(); }
+function openNameSetup(){
+  const raw=(state.me&&state.me.name)||''; const isEmail=raw.includes('@');
+  let first='', last='';
+  if(!isEmail && raw.trim()){ const p=raw.trim().split(/\s+/); last=p.length>1?p.pop():''; first=p.join(' '); }
+  sheet(`
+    <button class="closex" onclick="closeSheet()">×</button>
+    <h3>Your name</h3>
+    <div class="notice">This is how your name shows to the office and on your invoices.</div>
+    <div class="btnrow">
+      <div style="flex:1"><label>First name</label><input id="nmFirst" value="${first}" placeholder="First"></div>
+      <div style="flex:1"><label>Last name</label><input id="nmLast" value="${last}" placeholder="Last"></div>
+    </div>
+    <button class="btn primary" style="margin-top:16px" onclick="saveName()">Save name</button>
+  `);
+}
+async function saveName(){
+  const f=val('nmFirst'), l=val('nmLast');
+  if(!f||!l){ toast('Please enter your first and last name'); return; }
+  const full=(f+' '+l).trim();
+  state.me.name=full; state.me.initials=initialsOf(full);
+  if(session){ session.name=full; session.needsName=false; }
+  if(ONLINE){
+    const { error } = await sb.from('profiles').update({full_name:full}).eq('id',state.me.id);
+    if(error){ toast('Save failed: '+error.message); return; }
+  }
+  closeSheet(); toast('Name saved ✓');
+  if(ONLINE){ await sbRefresh(); } else { render(); }
+}
 function setAuthMode(m){ authMode=m; renderLogin(); }
 function renderLogin(){
   const signup = authMode==='signup';
@@ -491,7 +520,7 @@ function render(){
     renderLogin(); DB.save(); return;
   }
   role=session.role;
-  hr.innerHTML=`<div class="hdruser"><span>${session.name}</span><button class="logoutbtn" onclick="logout()">Log out</button></div>`;
+  hr.innerHTML=`<div class="hdruser"><span onclick="openNameSetup()" style="cursor:pointer" title="Edit your name">${session.name}</span><button class="logoutbtn" onclick="logout()">Log out</button></div>`;
   if(role==='contractor'){ renderContractor(); renderTabbar(); }
   else { renderAdmin(); document.getElementById('tabbar').innerHTML=''; }
   DB.save();
@@ -1128,6 +1157,7 @@ async function boot(){
       if(s){ const ok=await sbLoadAll(); if(!ok) session=null; }
     }catch(e){ console.error(e); }
     render();
+    if(session && session.needsName) openNameSetup();
     sb.auth.onAuthStateChange((_e,s2)=>{ if(!s2){ session=null; render(); } });
   } else {
     session=loadSession();
