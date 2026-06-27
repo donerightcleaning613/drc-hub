@@ -1,0 +1,17 @@
+{
+  "name": "DRC Hub",
+  "short_name": "DRC Hub",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#045ea9",
+  "theme_color": "#045ea9",
+  "icons": [
+    {
+      "src": "icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}
