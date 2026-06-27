@@ -258,12 +258,16 @@ async function sbLoadAll(){
   session = { role:prof.role, name:prof.full_name||user.email, id:user.id };
   state.me = { id:user.id, name:prof.full_name||user.email, initials:initialsOf(prof.full_name||user.email) };
 
-  // admins see the list of CONTRACTORS only (not other admins); contractors see just themselves
-  let profs = isAdmin ? ((await sb.from('profiles').select('*').eq('role','contractor').order('full_name')).data || []) : [prof];
+  // admins load everyone, then split into contractors (scheduling board) + full team (role mgmt)
+  let allProfs = isAdmin ? ((await sb.from('profiles').select('*').order('full_name')).data || []) : [prof];
+  let profs = isAdmin ? allProfs.filter(p=>p.role==='contractor') : [prof];
   state.contractors = profs.map((p,i)=>({
     id:p.id, name:p.full_name||'Contractor', initials:initialsOf(p.full_name||'Contractor'),
     cls:CLS[i%CLS.length], zones:p.zones||[], status:p.status||'Active', avail:{}, template:{}
   }));
+  state.team = isAdmin ? allProfs.map((p,i)=>({
+    id:p.id, name:p.full_name||'(no name)', role:p.role, initials:initialsOf(p.full_name||'?'), cls:CLS[i%CLS.length]
+  })) : null;
 
   const wks = weekStarts();
   const av = (await sb.from('availability').select('*').in('week_start', wks)).data || [];
@@ -868,8 +872,12 @@ function renderAdmin(){
   const nav=`<div class="btnrow" style="margin-bottom:14px">
     <button class="btn ${adminTab==='dashboard'?'primary':'ghost'}" onclick="setAdminTab('dashboard')">Dashboard</button>
     <button class="btn ${adminTab==='invoices'?'primary':'ghost'}" onclick="setAdminTab('invoices')">Invoices${unpaid?` · ${unpaid}`:''}</button>
+    <button class="btn ${adminTab==='team'?'primary':'ghost'}" onclick="setAdminTab('team')">Team</button>
   </div>`;
-  c.innerHTML = nav + (adminTab==='invoices' ? adminInvoicesView() : adminDashboard());
+  const body = adminTab==='invoices' ? adminInvoicesView()
+             : adminTab==='team'     ? adminTeamView()
+             : adminDashboard();
+  c.innerHTML = nav + body;
 }
 function adminDashboard(){
   return `
@@ -924,6 +932,36 @@ function adminInvoicesView(){
   `;
 }
 function setAdminWeek(i){ adminWeek=i; render(); }
+function adminTeamView(){
+  const team = state.team || (state.contractors||[]).map(c=>({id:c.id,name:c.name,role:c.role||'contractor',initials:c.initials,cls:c.cls}));
+  return `
+  <h2 class="section">Team & roles</h2>
+  <div class="notice">Promote a contractor to admin, or switch an admin back. Admins see the admin side; contractors see the contractor side.</div>
+  ${team.length?team.map((m,i)=>`
+    <div class="card spread">
+      <div class="row"><div class="avatar ${m.cls||CLS[i%CLS.length]}">${m.initials}</div>
+        <div><h3 style="font-size:15px;margin:0">${m.name}</h3>
+          <span class="pill ${m.role==='admin'?'blue':'gray'}">${m.role==='admin'?'Admin':'Contractor'}</span></div></div>
+      ${(session && m.id===session.id)
+        ? `<span class="muted" style="font-size:12px">You</span>`
+        : `<button class="btn ${m.role==='admin'?'red':'primary'} sm" onclick="toggleAdminRole('${m.id}')">${m.role==='admin'?'Make contractor':'Make admin'}</button>`}
+    </div>`).join(''):`<div class="card muted">No team members yet.</div>`}
+  `;
+}
+async function toggleAdminRole(id){
+  const list = state.team || state.contractors || [];
+  const m = list.find(x=>x.id===id); if(!m) return;
+  if(session && id===session.id){ toast("You can't change your own role"); return; }
+  const newRole = m.role==='admin'?'contractor':'admin';
+  if(ONLINE){
+    const { error } = await sb.from('profiles').update({role:newRole}).eq('id',id);
+    if(error){ toast('Update failed: '+error.message); return; }
+    toast(newRole==='admin'?'Promoted to admin ✓':'Changed to contractor ✓');
+    await sbRefresh();
+  } else {
+    m.role=newRole; toast('Role updated (demo)'); render();
+  }
+}
 function adminInvoiceCard(inv){
   const c=state.contractors.find(x=>x.id===inv.contractorId);
   const range=inv.start&&inv.end?`${inv.start} → ${inv.end}`:'';
