@@ -254,19 +254,22 @@ async function sbLoadAll(){
   if(!user) return false;
   const { data:prof, error } = await sb.from('profiles').select('*').eq('id', user.id).single();
   if(error || !prof){ toast('Could not load your profile'); return false; }
+  if(prof.status==='Removed'){ await sb.auth.signOut(); session=null;
+    toast('Your account has been deactivated — please contact the office.'); return false; }
   const isAdmin = prof.role === 'admin';
   session = { role:prof.role, name:prof.full_name||user.email, id:user.id };
   state.me = { id:user.id, name:prof.full_name||user.email, initials:initialsOf(prof.full_name||user.email) };
 
   // admins load everyone, then split into contractors (scheduling board) + full team (role mgmt)
   let allProfs = isAdmin ? ((await sb.from('profiles').select('*').order('full_name')).data || []) : [prof];
-  let profs = isAdmin ? allProfs.filter(p=>p.role==='contractor') : [prof];
+  let profs = isAdmin ? allProfs.filter(p=>p.role==='contractor' && p.status!=='Removed') : [prof];
   state.contractors = profs.map((p,i)=>({
     id:p.id, name:p.full_name||'Contractor', initials:initialsOf(p.full_name||'Contractor'),
     cls:CLS[i%CLS.length], zones:p.zones||[], status:p.status||'Active', avail:{}, template:{}
   }));
   state.team = isAdmin ? allProfs.map((p,i)=>({
-    id:p.id, name:p.full_name||'(no name)', role:p.role, initials:initialsOf(p.full_name||'?'), cls:CLS[i%CLS.length]
+    id:p.id, name:p.full_name||'(no name)', role:p.role, status:p.status||'Active',
+    initials:initialsOf(p.full_name||'?'), cls:CLS[i%CLS.length]
   })) : null;
 
   const wks = weekStarts();
@@ -933,19 +936,34 @@ function adminInvoicesView(){
 }
 function setAdminWeek(i){ adminWeek=i; render(); }
 function adminTeamView(){
-  const team = state.team || (state.contractors||[]).map(c=>({id:c.id,name:c.name,role:c.role||'contractor',initials:c.initials,cls:c.cls}));
+  const all = state.team || (state.contractors||[]).map(c=>({id:c.id,name:c.name,role:c.role||'contractor',status:c.status||'Active',initials:c.initials,cls:c.cls}));
+  const active = all.filter(m=>m.status!=='Removed');
+  const removed = all.filter(m=>m.status==='Removed');
+  const card = (m,i)=>{
+    const self = session && m.id===session.id;
+    return `<div class="card">
+      <div class="spread">
+        <div class="row"><div class="avatar ${m.cls||CLS[i%CLS.length]}">${m.initials}</div>
+          <div><h3 style="font-size:15px;margin:0">${m.name}</h3>
+            <span class="pill ${m.role==='admin'?'blue':'gray'}">${m.role==='admin'?'Admin':'Contractor'}</span></div></div>
+        ${self?`<span class="muted" style="font-size:12px">You</span>`:''}
+      </div>
+      ${self?'':`<div class="btnrow" style="margin-top:11px">
+        <button class="btn ${m.role==='admin'?'ghost':'primary'}" onclick="toggleAdminRole('${m.id}')">${m.role==='admin'?'Make contractor':'Make admin'}</button>
+        <button class="btn red" onclick="removeUser('${m.id}')">Remove</button>
+      </div>`}
+    </div>`;
+  };
   return `
   <h2 class="section">Team & roles</h2>
-  <div class="notice">Promote a contractor to admin, or switch an admin back. Admins see the admin side; contractors see the contractor side.</div>
-  ${team.length?team.map((m,i)=>`
+  <div class="notice">Promote a contractor to admin, switch them back, or remove their access. Removing is reversible — past invoices stay on record.</div>
+  ${active.length?active.map(card).join(''):`<div class="card muted">No active team members.</div>`}
+  ${removed.length?`<h2 class="section">Removed</h2>${removed.map((m,i)=>`
     <div class="card spread">
-      <div class="row"><div class="avatar ${m.cls||CLS[i%CLS.length]}">${m.initials}</div>
-        <div><h3 style="font-size:15px;margin:0">${m.name}</h3>
-          <span class="pill ${m.role==='admin'?'blue':'gray'}">${m.role==='admin'?'Admin':'Contractor'}</span></div></div>
-      ${(session && m.id===session.id)
-        ? `<span class="muted" style="font-size:12px">You</span>`
-        : `<button class="btn ${m.role==='admin'?'red':'primary'} sm" onclick="toggleAdminRole('${m.id}')">${m.role==='admin'?'Make contractor':'Make admin'}</button>`}
-    </div>`).join(''):`<div class="card muted">No team members yet.</div>`}
+      <div class="row"><div class="avatar gray">${m.initials}</div>
+        <div><h3 style="font-size:15px;margin:0">${m.name}</h3><span class="muted" style="font-size:12px">No access</span></div></div>
+      <button class="btn ghost sm" onclick="restoreUser('${m.id}')">Restore</button>
+    </div>`).join('')}`:''}
   `;
 }
 async function toggleAdminRole(id){
@@ -961,6 +979,26 @@ async function toggleAdminRole(id){
   } else {
     m.role=newRole; toast('Role updated (demo)'); render();
   }
+}
+async function removeUser(id){
+  const list = state.team || state.contractors || [];
+  const m = list.find(x=>x.id===id); if(!m) return;
+  if(session && id===session.id){ toast("You can't remove yourself"); return; }
+  if(typeof confirm==='function' && !confirm('Remove '+m.name+"? They'll lose access to the app right away. You can restore them later.")) return;
+  if(ONLINE){
+    const { error } = await sb.from('profiles').update({status:'Removed'}).eq('id',id);
+    if(error){ toast('Remove failed: '+error.message); return; }
+    toast('User removed'); await sbRefresh();
+  } else { m.status='Removed'; toast('User removed (demo)'); render(); }
+}
+async function restoreUser(id){
+  const list = state.team || state.contractors || [];
+  const m = list.find(x=>x.id===id); if(!m) return;
+  if(ONLINE){
+    const { error } = await sb.from('profiles').update({status:'Active'}).eq('id',id);
+    if(error){ toast('Restore failed: '+error.message); return; }
+    toast('User restored ✓'); await sbRefresh();
+  } else { m.status='Active'; toast('User restored (demo)'); render(); }
 }
 function adminInvoiceCard(inv){
   const c=state.contractors.find(x=>x.id===inv.contractorId);
