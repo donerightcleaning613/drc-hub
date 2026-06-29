@@ -208,6 +208,7 @@ label:first-child{margin-top:0}
 <div class="modal" id="modal"><div class="sheet" id="sheet"></div></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script>
 /* ============================================================
    ⚙️  CONFIG — edit these three values
@@ -217,6 +218,7 @@ const CONFIG = {
   BRAND: "Contractor Hub",              // subtitle in header
   SUPPORT_PHONE: "613-324-6779",        // management line for SMS button
   OFFICE_EMAIL: "contact@donerightcleaning.ca", // invoices are emailed here on submit
+  REVIEW_URL: "https://g.page/r/CS4XjoAlEYTgEBM/review", // Google review link (QR on Review tab)
   GUIDE_VIDEO_FILE: "jobber-guide.mp4", // a video file kept next to this HTML (plays in-app)
   GUIDE_VIDEO_URL: "",                  // OR paste a YouTube/Vimeo link instead
 
@@ -281,7 +283,8 @@ async function sbLoadAll(){
   let profs = isAdmin ? allProfs.filter(p=>p.role==='contractor' && p.status!=='Removed') : [prof];
   state.contractors = profs.map((p,i)=>({
     id:p.id, name:p.full_name||'Contractor', initials:initialsOf(p.full_name||'Contractor'),
-    cls:CLS[i%CLS.length], zones:p.zones||[], status:p.status||'Active', avail:{}, template:{}
+    cls:CLS[i%CLS.length], zones:p.zones||[], status:p.status||'Active', avail:{}, template:{},
+    locked:!!p.avail_locked, lockedTemplate:p.avail_template||null
   }));
   state.team = isAdmin ? allProfs.map((p,i)=>({
     id:p.id, name:p.full_name||'(no name)', role:p.role, status:p.status||'Active',
@@ -396,7 +399,12 @@ function weekStarts(){ const m=mondayOf(new Date()); const out=[]; for(let i=0;i
 function weekLabel(iso){ const s=new Date(iso+'T00:00:00'); const e=new Date(s); e.setDate(s.getDate()+6);
   const f=d=>d.toLocaleDateString('en-US',{month:'short',day:'numeric'}); return f(s)+' – '+f(e); }
 function clone(o){ return JSON.parse(JSON.stringify(o)); }
-function ensureWeeks(c){ if(!c.avail)c.avail={}; weekStarts().forEach(ws=>{ if(!c.avail[ws]) c.avail[ws]=clone(c.template||{}); }); }
+function ensureWeeks(c){ if(!c.avail)c.avail={};
+  weekStarts().forEach(ws=>{
+    if(c.locked && c.lockedTemplate) c.avail[ws]=clone(c.lockedTemplate);   // repeats weekly
+    else if(!c.avail[ws]) c.avail[ws]=clone(c.template||{});
+  });
+}
 function ensureAllWeeks(){ (state.contractors||[]).forEach(ensureWeeks); }
 
 /* ---------- icons ---------- */
@@ -406,7 +414,8 @@ const ICON = {
   invoice:'<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6M9 16h4"/>',
   chat:'<path d="M21 12a8 8 0 01-11.6 7.1L4 20l1-4.4A8 8 0 1121 12z"/>',
   more:'<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>',
-  send:'<path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>'
+  send:'<path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>',
+  qr:'<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3M21 14v7M17 21h4"/>'
 };
 function svg(p){return `<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;}
 
@@ -552,7 +561,7 @@ function render(){
 function renderTabbar(){
   const pend = state.premiumOffers.filter(o=>o.status==='pending').length;
   const tabs=[['home','Home',ICON.home],['jobs','Jobs',ICON.jobs],
-    ['invoices','Invoices',ICON.invoice],['chat','Chat',ICON.chat],['more','Guide',ICON.more]];
+    ['invoices','Invoices',ICON.invoice],['review','Review',ICON.qr],['chat','Chat',ICON.chat],['more','Guide',ICON.more]];
   document.getElementById('tabbar').innerHTML=tabs.map(([id,lbl,ic])=>
     `<button class="${ctab===id?'on':''}" onclick="setTab('${id}')">
        ${svg(ic)}<span>${lbl}</span>
@@ -568,8 +577,30 @@ function renderContractor(){
   if(ctab==='home') c.innerHTML=viewHome();
   else if(ctab==='jobs') c.innerHTML=viewJobs();
   else if(ctab==='invoices') c.innerHTML=viewInvoices();
+  else if(ctab==='review'){ c.innerHTML=viewReview(); buildQR(); }
   else if(ctab==='chat'){ c.innerHTML=viewChat(); scrollChat(); }
   else if(ctab==='more') c.innerHTML=viewMore();
+}
+function viewReview(){
+  return `
+  <h2 class="section">Leave us a review</h2>
+  <div class="notice">When you finish a clean, ask the customer to scan this code to leave a Google review — it opens our review page on their phone.</div>
+  <div class="card" style="text-align:center">
+    <div id="qrbox" style="display:flex;justify-content:center;padding:6px"></div>
+    <p class="muted" style="margin:12px 0 0">Have the customer point their phone camera at the code.</p>
+  </div>
+  <a class="btn primary" href="${CONFIG.REVIEW_URL}" target="_blank" rel="noopener" style="text-decoration:none">Open the review page</a>
+  `;
+}
+function buildQR(){
+  const box=document.getElementById('qrbox'); if(!box) return;
+  box.innerHTML='';
+  if(window.QRCode){
+    new window.QRCode(box, { text:CONFIG.REVIEW_URL, width:236, height:236,
+      colorDark:'#045ea9', colorLight:'#ffffff', correctLevel:window.QRCode.CorrectLevel.M });
+  } else {
+    box.innerHTML='<div class="muted" style="padding:30px 10px">The QR code needs an internet connection to display. Use the button below to open the review page.</div>';
+  }
 }
 
 function viewHome(){
@@ -844,11 +875,17 @@ function openAvail(){
   const anywhere=me.zones.includes('Anywhere in Ottawa');
   const wks=weekStarts();
   if(availWeek>3||availWeek<0) availWeek=0;
-  const wk=me.avail[wks[availWeek]]||{};
-  sheet(`
-    <button class="closex" onclick="closeSheet()">×</button>
-    <h3>Availability & service zone</h3>
-    <div class="notice">Set your availability for any of the next 4 weeks. The office schedules your work within it — keep it current.</div>
+  const locked=!!me.locked;
+  const wk = locked ? (me.lockedTemplate||{}) : (me.avail[wks[availWeek]]||{});
+  const daysBlock = locked ? `
+    <div class="notice">🔒 Your weekly schedule is <strong>locked</strong> and repeats automatically every week. Unlock to make changes.</div>
+    <strong style="font-size:13px;color:#334155">Your weekly schedule (every week)</strong>
+    <div style="margin-top:8px">${days.map(d=>{ const a=wk[d];
+      return `<div class="dayrow"><span class="dayname">${d}</span>
+        <span class="muted" style="margin-left:auto">${a?fmt12(a.from)+'–'+fmt12(a.to):'Unavailable'}</span></div>`;}).join('')}</div>
+    <button class="btn ghost" style="margin-top:14px" onclick="unlockAvailability()">🔓 Unlock to edit</button>
+  ` : `
+    <div class="notice">Set your availability for any of the next 4 weeks — or lock a weekly schedule that repeats automatically so you don't have to set it each week.</div>
     <strong style="font-size:13px;color:#334155">Pick a week</strong>
     <div class="zonechips" style="margin:8px 0 14px">${wks.map((ws,i)=>`
       <span class="chip" style="cursor:pointer;padding:7px 11px;${i===availWeek?'background:var(--teal);color:#fff':''}"
@@ -864,6 +901,12 @@ function openAvail(){
           <select onchange="setTime('${d}','to',this.value)">${timeOpts(a.to)}</select>
         </div>`:`<span class="muted" style="margin-left:auto;margin-right:10px">Unavailable</span>`}
         <div class="switch ${a?'on':''}" id="sw_${d}" onclick="toggleDay('${d}')"><i></i></div></div>`;}).join('')}</div>
+    <button class="btn ghost" style="margin-top:12px" onclick="lockAvailability()">🔒 Lock this as my repeating weekly schedule</button>
+  `;
+  sheet(`
+    <button class="closex" onclick="closeSheet()">×</button>
+    <h3>Availability & service zone</h3>
+    ${daysBlock}
     <label style="margin-top:18px">Service zones (tap to toggle)</label>
     <div class="zonechips" id="zonePick" style="margin-top:8px">
       <span class="chip" style="cursor:pointer;font-weight:800;${anywhere?'background:var(--teal);color:#fff':'background:#dceaf6;color:#045ea9'}"
@@ -873,6 +916,25 @@ function openAvail(){
         onclick="toggleZone('${z}')" id="z_${z.replace(/\s/g,'')}">${z}</span>`).join('')}</div>
     <button class="btn primary" style="margin-top:20px" onclick="saveAvail()">Save</button>
   `);
+}
+function lockAvailability(){
+  const me=state.contractors.find(x=>x.id===state.me.id);
+  const tpl=clone(me.avail[weekStarts()[availWeek]]||{});
+  me.locked=true; me.lockedTemplate=tpl;
+  weekStarts().forEach(ws=>me.avail[ws]=clone(tpl));
+  if(ONLINE){
+    sbDo(sb.from('profiles').update({avail_locked:true, avail_template:tpl}).eq('id',state.me.id));
+    weekStarts().forEach(ws=> sbDo(sb.from('availability').upsert(
+      {contractor_id:state.me.id,week_start:ws,data:tpl,updated_at:new Date().toISOString()},
+      {onConflict:'contractor_id,week_start'})));
+  }
+  toast('Schedule locked — repeats weekly 🔒'); openAvail();
+}
+function unlockAvailability(){
+  const me=state.contractors.find(x=>x.id===state.me.id);
+  me.locked=false;
+  if(ONLINE) sbDo(sb.from('profiles').update({avail_locked:false}).eq('id',state.me.id));
+  toast('Unlocked — adjust your availability'); openAvail();
 }
 function setAvailWeek(i){ availWeek=i; openAvail(); }
 function curWeekAvail(){ const me=state.contractors.find(x=>x.id===state.me.id); return me.avail[weekStarts()[availWeek]]; }
@@ -990,13 +1052,14 @@ function adminDashboard(){
   </div>
 
   <div class="spread"><h2 class="section">Support inbox</h2></div>
-  ${state.adminChats.map(ch=>`
+  <button class="btn primary" onclick="openMsgPicker()">${svg(ICON.chat)} Message a contractor</button>
+  <div style="margin-top:12px">${state.adminChats.length?state.adminChats.map(ch=>`
     <div class="card spread" style="cursor:pointer" onclick="openAdminChat('${ch.id}')">
       <div class="row"><div class="avatar ${ch.cls}">${ch.initials}</div>
         <div style="min-width:0"><h3 style="font-size:15px;margin:0">${ch.contractor}</h3>
           <div class="muted" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:210px">${ch.last}</div></div></div>
       ${ch.unread?`<span class="pill red">New</span>`:`<span class="pill gray">Open</span>`}
-    </div>`).join('')}
+    </div>`).join(''):`<div class="card muted">No conversations yet.</div>`}</div>
 
   <div class="spread"><h2 class="section">Extra assignments</h2></div>
   <button class="btn primary" onclick="openOfferJob()">${svg('<path d="M12 5v14M5 12h14"/>')} Offer an extra assignment</button>
@@ -1168,8 +1231,24 @@ function adminContractorCard(c){
 
 function openAdminChat(id){ activeAdminChat=id;
   const ch=state.adminChats.find(c=>c.id===id); if(ch)ch.unread=false; render(); }
+function openMsgPicker(){
+  sheet(`
+    <button class="closex" onclick="closeSheet()">×</button>
+    <h3>Message a contractor</h3>
+    <div class="notice">Start a conversation — they'll see it in their Chat tab.</div>
+    ${(state.contractors||[]).length?state.contractors.map(c=>`
+      <div class="checkrow" onclick="startChatWith('${c.id}')">
+        <div class="avatar ${c.cls}" style="width:32px;height:32px;font-size:12px">${c.initials}</div>
+        <strong>${c.name}</strong></div>`).join(''):`<div class="muted">No contractors yet.</div>`}
+  `);
+}
+function startChatWith(id){ closeSheet(); activeAdminChat=id; render(); }
 function adminChatView(){
-  const ch=state.adminChats.find(c=>c.id===activeAdminChat);
+  let ch=state.adminChats.find(c=>c.id===activeAdminChat);
+  if(!ch){ const c=(state.contractors||[]).find(x=>x.id===activeAdminChat)
+              || (state.team||[]).find(x=>x.id===activeAdminChat)
+              || {name:'Contractor',initials:'?',cls:''};
+    ch={id:activeAdminChat, contractor:c.name, initials:c.initials, cls:c.cls, last:'', unread:false, log:[]}; }
   return `
   <div class="row" style="margin-bottom:10px"><button class="btn ghost sm" onclick="closeAdminChat()">‹ Inbox</button>
     <div class="row"><div class="avatar ${ch.cls}">${ch.initials}</div><strong>${ch.contractor}</strong></div></div>
@@ -1184,12 +1263,20 @@ function adminChatView(){
     </div>
   </div>`;
 }
-function adminSend(){
+async function adminSend(){
   const f=document.getElementById('adminField'); const t=f.value.trim(); if(!t)return;
-  const ch=state.adminChats.find(c=>c.id===activeAdminChat);
-  ch.log.push({from:'admin',text:t,t:Date.now()}); ch.last='You: '+t; ch.unread=false; f.value='';
-  if(ONLINE) sbDo(sb.from('messages').insert({contractor_id:activeAdminChat,sender:'admin',body:t}));
-  render(); scrollChat(); toast('Reply sent to contractor');
+  f.value='';
+  if(ONLINE){
+    const { error } = await sb.from('messages').insert({contractor_id:activeAdminChat,sender:'admin',body:t});
+    if(error){ toast('Send failed: '+error.message); return; }
+    await sbRefresh(); scrollChat(); toast('Message sent to contractor');
+  } else {
+    let ch=state.adminChats.find(c=>c.id===activeAdminChat);
+    if(!ch){ const c=(state.contractors||[]).find(x=>x.id===activeAdminChat)||{contractor:'Contractor',initials:'?',cls:''};
+      ch={id:activeAdminChat,contractor:c.name||'Contractor',initials:c.initials||'?',cls:c.cls||'',last:'',unread:false,log:[]}; state.adminChats.push(ch); }
+    ch.log.push({from:'admin',text:t,t:Date.now()}); ch.last='You: '+t; ch.unread=false;
+    render(); scrollChat(); toast('Message sent to contractor');
+  }
 }
 function closeAdminChat(){ activeAdminChat=null; render(); }
 
