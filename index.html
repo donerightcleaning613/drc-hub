@@ -219,6 +219,7 @@ const CONFIG = {
   SUPPORT_PHONE: "613-324-6779",        // management line for SMS button
   OFFICE_EMAIL: "contact@donerightcleaning.ca", // invoices are emailed here on submit
   REVIEW_URL: "https://g.page/r/CS4XjoAlEYTgEBM/review", // Google review link (QR on Review tab)
+  PREMIUM_RATE: 27,                     // $/hr paid for premium (short-notice) hours
   GUIDE_VIDEO_FILE: "jobber-guide.mp4", // a video file kept next to this HTML (plays in-app)
   GUIDE_VIDEO_URL: "",                  // OR paste a YouTube/Vimeo link instead
 
@@ -284,11 +285,11 @@ async function sbLoadAll(){
   state.contractors = profs.map((p,i)=>({
     id:p.id, name:p.full_name||'Contractor', initials:initialsOf(p.full_name||'Contractor'),
     cls:CLS[i%CLS.length], zones:p.zones||[], status:p.status||'Active', avail:{}, template:{},
-    locked:!!p.avail_locked, lockedTemplate:p.avail_template||null
+    locked:!!p.avail_locked, lockedTemplate:p.avail_template||null, hourly_rate:p.hourly_rate
   }));
   state.team = isAdmin ? allProfs.map((p,i)=>({
     id:p.id, name:p.full_name||'(no name)', role:p.role, status:p.status||'Active',
-    initials:initialsOf(p.full_name||'?'), cls:CLS[i%CLS.length]
+    initials:initialsOf(p.full_name||'?'), cls:CLS[i%CLS.length], rate:p.hourly_rate
   })) : null;
 
   const wks = weekStarts();
@@ -1092,11 +1093,40 @@ function adminInvoicesView(){
   </div>
   ${list.length?list.map(adminInvoiceCard).join('')
     :`<div class="card muted">No ${invFilter==='all'?'':invFilter+' '}invoices.</div>`}
+  <h2 class="section">Pay sheet</h2>
+  <div class="btnrow">
+    <button class="btn ghost" onclick="downloadPaySheet()">${svg('<path d="M12 3v12M7 10l5 5 5-5M5 21h14"/>')} Download CSV</button>
+    <button class="btn ghost" onclick="emailPaySheet()">${svg('<path d="M4 4h16v16H4z"/><path d="M4 6l8 6 8-6"/>')} Email to office</button>
+  </div>
   `;
+}
+function paySheetRows(){
+  const rows=[['Contractor','Week start','Week end','Regular hrs','Premium hrs','Rate','Total due','Status']];
+  (state.invoices||[]).forEach(inv=>{ const t=invoiceTotal(inv);
+    rows.push([inv.contractor||'', inv.start||'', inv.end||'', inv.hours||0, inv.premiumHours||0,
+      t?t.rate.toFixed(2):'', t?t.total.toFixed(2):'', inv.paid?'Paid':'Unpaid']); });
+  return rows;
+}
+function downloadPaySheet(){
+  const csv=paySheetRows().map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
+  try{
+    const blob=new Blob([csv],{type:'text/csv'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a'); a.href=url; a.download='DRC-pay-sheet.csv'; a.click();
+    setTimeout(()=>URL.revokeObjectURL(url),1000);
+    toast('Pay sheet downloaded — attach it to your email');
+  }catch(e){ toast('Could not generate file'); }
+}
+function emailPaySheet(){
+  let body='DRC weekly pay sheet\n\n';
+  (state.invoices||[]).forEach(inv=>{ const t=invoiceTotal(inv);
+    body+=`${inv.contractor}: ${inv.hours||0}h regular`+(inv.premiumHours?` + ${inv.premiumHours}h premium`:'')
+       +(t?` = $${t.total.toFixed(2)}`:' (rate not set)')+(inv.paid?' [paid]':'')+'\n'; });
+  window.location.href=`mailto:${CONFIG.OFFICE_EMAIL}?subject=${encodeURIComponent('DRC weekly pay sheet')}&body=${encodeURIComponent(body)}`;
 }
 function setAdminWeek(i){ adminWeek=i; render(); }
 function adminTeamView(){
-  const all = state.team || (state.contractors||[]).map(c=>({id:c.id,name:c.name,role:c.role||'contractor',status:c.status||'Active',initials:c.initials,cls:c.cls}));
+  const all = state.team || (state.contractors||[]).map(c=>({id:c.id,name:c.name,role:c.role||'contractor',status:c.status||'Active',initials:c.initials,cls:c.cls,rate:c.hourly_rate}));
   const active = all.filter(m=>m.status!=='Removed');
   const removed = all.filter(m=>m.status==='Removed');
   const card = (m,i)=>{
@@ -1108,6 +1138,13 @@ function adminTeamView(){
             <span class="pill ${m.role==='admin'?'blue':'gray'}">${m.role==='admin'?'Admin':'Contractor'}</span></div></div>
         ${self?`<span class="muted" style="font-size:12px">You</span>`:''}
       </div>
+      ${m.role==='contractor'?`<div class="spread" style="margin-top:11px">
+        <span class="muted" style="font-size:13px">Hourly pay</span>
+        <div class="row" style="gap:6px"><span class="muted">$</span>
+          <input id="rate_${m.id}" type="number" inputmode="decimal" step="0.25" value="${m.rate??''}" placeholder="0.00" style="width:78px;margin:0;padding:8px">
+          <span class="muted">/hr</span>
+          <button class="btn ghost sm" onclick="setRate('${m.id}')">Save</button></div>
+      </div>`:''}
       ${self?'':`<div class="btnrow" style="margin-top:11px">
         <button class="btn ${m.role==='admin'?'ghost':'primary'}" onclick="toggleAdminRole('${m.id}')">${m.role==='admin'?'Make contractor':'Make admin'}</button>
         <button class="btn red" onclick="removeUser('${m.id}')">Remove</button>
@@ -1160,6 +1197,27 @@ async function restoreUser(id){
     toast('User restored ✓'); await sbRefresh();
   } else { m.status='Active'; toast('User restored (demo)'); render(); }
 }
+async function setRate(id){
+  const v=parseFloat(val('rate_'+id));
+  if(isNaN(v)||v<0){ toast('Enter a valid hourly rate'); return; }
+  const m=(state.team||[]).find(x=>x.id===id); if(m)m.rate=v;
+  const c=(state.contractors||[]).find(x=>x.id===id); if(c)c.hourly_rate=v;
+  if(ONLINE){ const { error } = await sb.from('profiles').update({hourly_rate:v}).eq('id',id);
+    if(error){ toast('Save failed: '+error.message); return; } }
+  toast('Hourly pay saved ✓'); render();
+}
+function rateOf(id){
+  const m=(state.team||[]).find(x=>x.id===id); if(m && m.rate!=null) return Number(m.rate);
+  const c=(state.contractors||[]).find(x=>x.id===id); if(c && c.hourly_rate!=null) return Number(c.hourly_rate);
+  return null;
+}
+function invoiceTotal(inv){
+  const rate=rateOf(inv.contractorId);
+  if(rate==null || isNaN(rate)) return null;
+  const reg=Number(inv.hours||0)*rate;
+  const prem=Number(inv.premiumHours||0)*Number(CONFIG.PREMIUM_RATE||0);
+  return { rate, reg, prem, total:reg+prem };
+}
 function timeAgo(t){
   const s=Math.floor((Date.now()-t)/1000);
   if(s<60) return 'just now';
@@ -1203,6 +1261,10 @@ function adminInvoiceCard(inv){
     <div class="muted" style="margin-top:3px">Week ${range}</div>
     <div class="row" style="margin-top:5px;gap:8px"><span class="pill blue">${(Number(inv.hours||0)+Number(inv.premiumHours||0))} hrs total</span>
       <span class="muted">${inv.hours||0} regular${prem}</span></div>
+    ${(()=>{ const t=invoiceTotal(inv);
+      return t? `<div style="margin-top:8px;font-size:16px;font-weight:700;color:#0f172a">Total due: $${t.total.toFixed(2)}</div>
+        <div class="muted" style="font-size:12px">${inv.hours||0} hrs × $${t.rate.toFixed(2)}${inv.premiumHours?` + ${inv.premiumHours} premium × $${Number(CONFIG.PREMIUM_RATE).toFixed(2)}`:''}</div>`
+        : `<div class="muted" style="margin-top:8px;font-size:12px">Set this contractor's hourly pay on the Team tab to see total due.</div>`; })()}
     <div style="margin-top:10px;background:#f8fafc;border:1px solid var(--line);border-radius:10px;padding:9px 11px;font-size:13px">
       <span style="font-weight:600">📝 Notes:</span> ${inv.notes?inv.notes:'<span class="muted">No notes left</span>'}
     </div>
