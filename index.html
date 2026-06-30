@@ -285,11 +285,13 @@ async function sbLoadAll(){
   state.contractors = profs.map((p,i)=>({
     id:p.id, name:p.full_name||'Contractor', initials:initialsOf(p.full_name||'Contractor'),
     cls:CLS[i%CLS.length], zones:p.zones||[], status:p.status||'Active', avail:{}, template:{},
-    locked:!!p.avail_locked, lockedTemplate:p.avail_template||null, hourly_rate:p.hourly_rate
+    locked:!!p.avail_locked, lockedTemplate:p.avail_template||null, hourly_rate:p.hourly_rate,
+    score:(p.score==null?6:p.score)
   }));
   state.team = isAdmin ? allProfs.map((p,i)=>({
     id:p.id, name:p.full_name||'(no name)', role:p.role, status:p.status||'Active',
-    initials:initialsOf(p.full_name||'?'), cls:CLS[i%CLS.length], rate:p.hourly_rate
+    initials:initialsOf(p.full_name||'?'), cls:CLS[i%CLS.length], rate:p.hourly_rate,
+    score:(p.score==null?6:p.score)
   })) : null;
 
   const wks = weekStarts();
@@ -687,6 +689,30 @@ function viewInvoices(){
     <button class="btn primary" style="margin-top:14px" onclick="submitInvoice()">Submit weekly invoice</button>
   </div>
   <p class="muted" style="text-align:center">⏰ Invoices must be submitted by midnight on Sundays, or processing may be delayed.</p>
+  ${earningsSection()}
+  `;
+}
+function earningsSection(){
+  const yr=new Date().getFullYear();
+  const mine=(state.invoices||[]).filter(i=> i.contractorId===state.me.id && String(i.start||'').slice(0,4)===String(yr));
+  let total=0, missing=false;
+  mine.forEach(i=>{ const t=invoiceTotal(i); if(t) total+=t.total; else missing=true; });
+  const sorted=mine.slice().sort((a,b)=>String(b.start||'').localeCompare(String(a.start||'')));
+  return `
+  <h2 class="section">Your earnings — ${yr}</h2>
+  <div class="card" style="text-align:center">
+    <div class="muted">Total earned this year</div>
+    <div style="font-size:28px;font-weight:800;color:#045ea9">$${total.toFixed(2)}</div>
+    ${missing?`<div class="muted" style="font-size:12px;margin-top:4px">Some weeks are awaiting a pay rate from the office.</div>`:''}
+  </div>
+  ${sorted.length?sorted.map(i=>{ const t=invoiceTotal(i);
+    return `<div class="card spread">
+      <div><h3 style="font-size:15px;margin:0">${i.start} → ${i.end}</h3>
+        <div class="muted">${i.hours||0} hrs${i.premiumHours?` + ${i.premiumHours} premium`:''}</div></div>
+      <div style="text-align:right">
+        <div style="font-weight:700;font-size:16px">${t?'$'+t.total.toFixed(2):'—'}</div>
+        <span class="pill ${i.paid?'green':'amber'}">${i.paid?'Paid':'Pending'}</span></div>
+    </div>`;}).join(''):`<div class="card muted">No invoices yet this year.</div>`}
   `;
 }
 function submitInvoice(){
@@ -1144,6 +1170,12 @@ function adminTeamView(){
           <input id="rate_${m.id}" type="number" inputmode="decimal" step="0.25" value="${m.rate??''}" placeholder="0.00" style="width:78px;margin:0;padding:8px">
           <span class="muted">/hr</span>
           <button class="btn ghost sm" onclick="setRate('${m.id}')">Save</button></div>
+      </div>
+      <div class="spread" style="margin-top:9px">
+        <span class="muted" style="font-size:13px">Score <span class="pill ${scoreCls(m.score)}">${m.score??6}/10</span></span>
+        <div class="row" style="gap:6px">
+          <input id="score_${m.id}" type="number" min="1" max="10" step="1" value="${m.score??6}" style="width:64px;margin:0;padding:8px">
+          <button class="btn ghost sm" onclick="setScore('${m.id}')">Save</button></div>
       </div>`:''}
       ${self?'':`<div class="btnrow" style="margin-top:11px">
         <button class="btn ${m.role==='admin'?'ghost':'primary'}" onclick="toggleAdminRole('${m.id}')">${m.role==='admin'?'Make contractor':'Make admin'}</button>
@@ -1196,6 +1228,17 @@ async function restoreUser(id){
     if(error){ toast('Restore failed: '+error.message); return; }
     toast('User restored ✓'); await sbRefresh();
   } else { m.status='Active'; toast('User restored (demo)'); render(); }
+}
+function scoreCls(s){ s=Number(s); return s>=8?'green':(s>=6?'amber':'red'); }
+async function setScore(id){
+  let v=parseInt(val('score_'+id),10);
+  if(isNaN(v)){ toast('Enter a score from 1 to 10'); return; }
+  v=Math.max(1,Math.min(10,v));
+  const m=(state.team||[]).find(x=>x.id===id); if(m)m.score=v;
+  const c=(state.contractors||[]).find(x=>x.id===id); if(c)c.score=v;
+  if(ONLINE){ const { error } = await sb.from('profiles').update({score:v}).eq('id',id);
+    if(error){ toast('Save failed: '+error.message); return; } }
+  toast('Score saved ✓'); render();
 }
 async function setRate(id){
   const v=parseFloat(val('rate_'+id));
@@ -1284,7 +1327,8 @@ function adminContractorCard(c){
   return `<div class="card">
     <div class="row"><div class="avatar ${c.cls}">${c.initials}</div>
       <div style="flex:1"><div class="spread"><h3 style="font-size:15px;margin:0">${c.name}</h3>
-        <span class="pill ${c.status==='Active'?'green':'gray'}">${c.status}</span></div></div></div>
+        <div class="row" style="gap:6px"><span class="pill ${scoreCls(c.score)}">${c.score??6}/10</span>
+          <span class="pill ${c.status==='Active'?'green':'gray'}">${c.status}</span></div></div></div></div>
     <div class="zonechips">${c.zones.length?c.zones.map(z=>`<span class="chip">${z}</span>`).join(''):'<span class="chip">No zone set</span>'}</div>
     <div class="availbar">${days.map(d=>`<span class="${wk[d]?'a':''}">${d[0]}</span>`).join('')}</div>
     <div class="muted" style="font-size:11.5px;margin-top:7px">${times}</div>
