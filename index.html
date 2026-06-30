@@ -593,6 +593,25 @@ function viewReview(){
     <p class="muted" style="margin:12px 0 0">Have the customer point their phone camera at the code.</p>
   </div>
   <a class="btn primary" href="${CONFIG.REVIEW_URL}" target="_blank" rel="noopener" style="text-decoration:none">Open the review page</a>
+
+  <h2 class="section">How to ask for a review</h2>
+  <div class="card" style="background:#eaf2fb;border:1px solid #b6d4f0">
+    <strong style="color:#045ea9">💸 You earn a bonus for every review</strong>
+    <p class="muted" style="margin:4px 0 0">A customer review left from your code earns you a bonus — so it's worth asking on every job.</p>
+  </div>
+  <div class="card">
+    ${[
+      'Ask right after the <strong>final walkthrough</strong> — once you\'ve walked the customer through the finished home and they can see the results, they\'re happiest and most likely to say yes.',
+      'Keep it warm and quick — a friendly ask beats a hard sell.',
+      'Show the code — let them scan it with their phone camera; it opens our review page instantly.',
+      'Make it easy — offer to wait the 30 seconds while they scan.',
+      'Always say thanks — whether or not they leave one.'
+    ].map(t=>`<div class="row" style="align-items:flex-start;margin-bottom:8px"><span style="color:var(--green);font-weight:800">✓</span><span>${t}</span></div>`).join('')}
+  </div>
+  <h2 class="section">Something you can say</h2>
+  <div class="card" style="color:#334155;font-style:italic">
+    “I hope you're happy with how everything turned out! If you've got a quick second, a short Google review really helps me out — it even earns me a little bonus. You can just scan this code with your camera. Thank you so much!”
+  </div>
   `;
 }
 function buildQR(){
