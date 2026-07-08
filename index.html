@@ -247,6 +247,31 @@ let sb = ONLINE ? makeClient(keepPref) : null;
 const CLS = ['','b','c','d','e'];
 function initialsOf(name){ return (name||'?').split(/\s+/).map(w=>w[0]).join('').slice(0,2).toUpperCase(); }
 const BOT_GREETING = "Hi 👋 I'm the DRC assistant. Ask me anything — pay, scheduling, extra assignments, or how to submit your weekly invoice. If I can't help, you can reach a real person.";
+/* ---------- daily motivation (rotates by day, same for everyone) ---------- */
+const MOTIVATIONS = [
+  "Every spotless home is a happy customer. Have a great day out there! 💪",
+  "Small details make a big difference — you've got this today.",
+  "Your hard work keeps clients coming back. Thank you for all you do!",
+  "A clean home, a fresh start. Go make someone's day shine. ✨",
+  "Consistency is your superpower. One great job at a time.",
+  "Take pride in the finish — the walkthrough is where you shine.",
+  "Great attitudes leave great impressions. Bring the energy today!",
+  "You're the reason DRC has a great reputation. Keep it up! 🌟",
+  "Quality over speed, always. Do it right and it's Done Right.",
+  "A friendly smile is part of the service. Have a wonderful day.",
+  "Every review you earn is a bonus in your pocket — go for it!",
+  "Hard days build strong reputations. You're capable of anything.",
+  "Leave every home better than you found it. That's the DRC way.",
+  "Your effort doesn't go unnoticed. Thank you for showing up strong.",
+  "Fresh day, fresh start. Let's make it a great one. ☀️",
+  "Teamwork makes the dream work — the whole DRC crew has your back.",
+  "Attention to detail today = a five-star review tomorrow.",
+  "Be proud of your work. You make homes healthier and happier.",
+  "Stay safe, stay sharp, and take care of yourself out there.",
+  "You bring the shine. Go have an amazing day!"
+];
+function dayOfYear(d){ const s=new Date(d.getFullYear(),0,0); return Math.floor((d-s)/86400000); }
+function dailyMotivation(){ return MOTIVATIONS[dayOfYear(new Date()) % MOTIVATIONS.length]; }
 
 /* ---------- storage helpers (persist on this device) ---------- */
 const DB = {
@@ -771,7 +796,10 @@ function viewChat(){
   return `
   <div class="chatwrap">
     <div class="notice">💬 The assistant answers instantly. Still stuck? Tap <strong>Text a human</strong> to SMS the office.</div>
-    <div class="chatlog" id="chatlog">${state.chat.map(renderMsg).join('')}</div>
+    <div class="chatlog" id="chatlog">
+      <div class="msgmeta">☀️ Daily motivation</div>
+      <div class="msg bot" style="background:#eaf2fb;border-color:#b6d4f0;color:#045ea9;font-weight:500">${dailyMotivation()}</div>
+      ${state.chat.map(renderMsg).join('')}</div>
     <div class="quickreplies" id="quick">
       ${['How do I get paid?','What counts as premium pay?','Change my availability','Report a problem']
         .map(q=>`<button onclick="ask('${q}')">${q}</button>`).join('')}
