@@ -340,7 +340,8 @@ async function sbLoadAll(){
   const inv = (await sb.from('invoices').select('*').order('submitted_at',{ascending:false})).data || [];
   state.invoices = inv.map(i=>({id:i.id,contractorId:i.contractor_id,contractor:i.contractor_name,
     start:i.week_start,end:i.week_end,hours:Number(i.hours)||0,premiumHours:Number(i.premium_hours)||0,
-    notes:i.notes||'',paid:!!i.paid,status:i.paid?'Paid':'Submitted'}));
+    notes:i.notes||'',paid:!!i.paid,status:i.paid?'Paid':'Submitted',
+    bonus:Number(i.bonus)||0,bonusNote:i.bonus_note||''}));
 
   const inc = (await sb.from('incidents').select('*').order('created_at',{ascending:false})).data || [];
   state.incidents = inc.map(r=>({id:r.id,type:r.type,where:r.where_text,date:r.occurred_on,desc:r.description}));
@@ -1241,8 +1242,8 @@ function paySheetGroups(){
   const byC={};
   (state.invoices||[]).filter(inv=>!inv.paid).forEach(inv=>{
     const id=inv.contractorId;
-    const g=byC[id]||(byC[id]={id,name:inv.contractor||'',hours:0,prem:0,total:0,weeks:0,rate:rateOf(id),start:null,end:null,missing:false});
-    g.hours+=Number(inv.hours||0); g.prem+=Number(inv.premiumHours||0); g.weeks++;
+    const g=byC[id]||(byC[id]={id,name:inv.contractor||'',hours:0,prem:0,bonus:0,total:0,weeks:0,rate:rateOf(id),start:null,end:null,missing:false});
+    g.hours+=Number(inv.hours||0); g.prem+=Number(inv.premiumHours||0); g.bonus+=Number(inv.bonus||0); g.weeks++;
     const t=invoiceTotal(inv); if(t) g.total+=t.total; else g.missing=true;
     if(inv.start && (!g.start||inv.start<g.start)) g.start=inv.start;
     if(inv.end   && (!g.end||inv.end>g.end))       g.end=inv.end;
@@ -1250,10 +1251,10 @@ function paySheetGroups(){
   return Object.values(byC);
 }
 function paySheetRows(){
-  const rows=[['Contractor','Period','Weeks','Regular hrs','Premium hrs','Rate','Total due']];
+  const rows=[['Contractor','Period','Weeks','Regular hrs','Premium hrs','Rate','Tips/Bonus','Total due']];
   paySheetGroups().forEach(g=>{
     rows.push([g.name, (g.start||'')+' → '+(g.end||''), g.weeks, g.hours, g.prem,
-      g.rate!=null?g.rate.toFixed(2):'', g.missing?'rate not set':g.total.toFixed(2)]);
+      g.rate!=null?g.rate.toFixed(2):'', (g.bonus||0).toFixed(2), g.missing?'rate not set':g.total.toFixed(2)]);
   });
   return rows;
 }
@@ -1273,7 +1274,7 @@ function emailPaySheet(){
   if(!groups.length) body+='(No unpaid invoices.)\n';
   let grand=0;
   groups.forEach(g=>{ if(!g.missing) grand+=g.total;
-    body+=`${g.name}: ${g.hours}h regular`+(g.prem?` + ${g.prem}h premium`:'')+` over ${g.weeks} week${g.weeks>1?'s':''}`
+    body+=`${g.name}: ${g.hours}h regular`+(g.prem?` + ${g.prem}h premium`:'')+(g.bonus?` + $${g.bonus.toFixed(2)} tip/bonus`:'')+` over ${g.weeks} week${g.weeks>1?'s':''}`
        +(g.missing?' (rate not set)':` = $${g.total.toFixed(2)}`)+'\n'; });
   if(groups.length) body+=`\nTotal to pay out: $${grand.toFixed(2)}\n`;
   window.location.href=`mailto:${CONFIG.OFFICE_EMAIL}?subject=${encodeURIComponent('DRC pay sheet — amounts owing')}&body=${encodeURIComponent(body)}`;
@@ -1471,7 +1472,8 @@ function invoiceTotal(inv){
   if(rate==null || isNaN(rate)) return null;
   const reg=Number(inv.hours||0)*rate;
   const prem=Number(inv.premiumHours||0)*Number(CONFIG.PREMIUM_RATE||0);
-  return { rate, reg, prem, total:reg+prem };
+  const bonus=Number(inv.bonus||0);
+  return { rate, reg, prem, bonus, total:reg+prem+bonus };
 }
 function timeAgo(t){
   const s=Math.floor((Date.now()-t)/1000);
@@ -1518,10 +1520,19 @@ function adminInvoiceCard(inv){
       <span class="muted">${inv.hours||0} regular${prem}</span></div>
     ${(()=>{ const t=invoiceTotal(inv);
       return t? `<div style="margin-top:8px;font-size:16px;font-weight:700;color:#0f172a">Total due: $${t.total.toFixed(2)}</div>
-        <div class="muted" style="font-size:12px">${inv.hours||0} hrs × $${t.rate.toFixed(2)}${inv.premiumHours?` + ${inv.premiumHours} premium × $${Number(CONFIG.PREMIUM_RATE).toFixed(2)}`:''}</div>`
+        <div class="muted" style="font-size:12px">${inv.hours||0} hrs × $${t.rate.toFixed(2)}${inv.premiumHours?` + ${inv.premiumHours} premium × $${Number(CONFIG.PREMIUM_RATE).toFixed(2)}`:''}${t.bonus?` + $${t.bonus.toFixed(2)} tip/bonus`:''}</div>`
         : `<div class="muted" style="margin-top:8px;font-size:12px">Set this contractor's hourly pay on the Team tab to see total due.</div>`; })()}
     <div style="margin-top:10px;background:#f8fafc;border:1px solid var(--line);border-radius:10px;padding:9px 11px;font-size:13px">
       <span style="font-weight:600">📝 Notes:</span> ${inv.notes?inv.notes:'<span class="muted">No notes left</span>'}
+    </div>
+    <div style="margin-top:10px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:9px 11px">
+      <div class="muted" style="font-size:12px;font-weight:600;margin-bottom:6px">💰 Tip / bonus (added to this invoice's pay)</div>
+      <div class="row" style="gap:6px">
+        <span class="muted">$</span>
+        <input id="bonus_${inv.id}" type="number" step="0.01" value="${inv.bonus?inv.bonus:''}" placeholder="0.00" style="width:78px;margin:0;padding:8px">
+        <input id="bnote_${inv.id}" value="${inv.bonusNote||''}" placeholder="reason (optional)" style="flex:1;margin:0;padding:8px">
+        <button class="btn ghost sm" onclick="setBonus('${inv.id}')">Save</button>
+      </div>
     </div>
     <button class="btn ${inv.paid?'ghost':'green'} sm" style="width:100%;margin-top:12px" onclick="togglePaid('${inv.id}')">
       ${inv.paid?'Mark unpaid':'Mark paid'}</button>
@@ -1532,6 +1543,15 @@ function togglePaid(id){ const inv=state.invoices.find(x=>x.id===id); if(!inv)re
   if(ONLINE) sbDo(sb.from('invoices').update({paid:inv.paid}).eq('id',id));
   toast(inv.paid?'Marked paid ✓':'Marked unpaid'); render();
 }
+async function setBonus(id){
+  const inv=state.invoices.find(x=>x.id===id); if(!inv)return;
+  const v=parseFloat(val('bonus_'+id))||0; const note=val('bnote_'+id);
+  if(v<0){ toast('Enter a valid amount'); return; }
+  inv.bonus=v; inv.bonusNote=note;
+  if(ONLINE){ const {error}=await sb.from('invoices').update({bonus:v,bonus_note:note}).eq('id',id);
+    if(error){ toast('Save failed: '+error.message); return; } }
+  toast(v?'Tip/bonus saved ✓':'Tip/bonus cleared'); render();
+}
 function adminContractorCard(c){
   const days=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
   const wk=(c.avail&&c.avail[weekStarts()[adminWeek]])||{};
@@ -1541,7 +1561,7 @@ function adminContractorCard(c){
       <div style="flex:1"><div class="spread"><h3 style="font-size:15px;margin:0">${c.name}</h3>
         <div class="row" style="gap:6px"><span class="pill ${scoreCls(c.score)}">${c.score??6}/10</span>
           <span class="pill ${c.status==='Active'?'green':'gray'}">${c.status}</span></div></div></div></div>
-    <div class="zonechips">${c.zones.length?c.zones.map(z=>`<span class="chip">${z}</span>`).join(''):'<span class="chip">No zone set</span>'}</div>
+    <div class="zonechips">${(c.zones||[]).length?(c.zones||[]).map(z=>`<span class="chip">${z}</span>`).join(''):'<span class="chip">No zone set</span>'}</div>
     <div class="availbar">${days.map(d=>`<span class="${wk[d]?'a':''}">${d[0]}</span>`).join('')}</div>
     <div class="muted" style="font-size:11.5px;margin-top:7px">${times}</div>
   </div>`;
