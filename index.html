@@ -65,6 +65,12 @@ body{
 .demohint{text-align:center;font-size:12px;color:var(--muted);margin:16px 0 8px}
 .content{flex:1;padding:16px 16px 96px;overflow-y:auto}
 .content svg{vertical-align:-3px;flex:none}
+.bluedot{width:10px;height:10px;border-radius:50%;background:#2563eb;display:inline-block;flex:none}
+.msg.hasdot{position:relative}
+.checkrow2{display:flex;align-items:center;gap:10px;padding:11px;border:1.5px solid var(--line);border-radius:12px;margin-bottom:8px;cursor:pointer}
+.checkrow2.done{border-color:var(--green);background:var(--green-bg)}
+.checkrow2 .cb{width:22px;height:22px;border-radius:6px;border:2px solid #cbd5e1;flex:none;display:grid;place-items:center;color:transparent}
+.checkrow2.done .cb{background:var(--green);border-color:var(--green);color:#fff}
 .btn svg,.iconbtn svg{width:17px;height:17px}
 .view{display:none;animation:fade .25s ease}
 .view.on{display:block}
@@ -303,6 +309,7 @@ async function sbLoadAll(){
   const _nm=(prof.full_name||'').trim();
   session.needsName = !_nm || _nm.includes('@');   // treat an email-as-name as "no name yet"
   state.me = { id:user.id, name:prof.full_name||user.email, initials:initialsOf(prof.full_name||user.email) };
+  chatReadAt = prof.chat_read_at ? new Date(prof.chat_read_at).getTime() : 0;
 
   // admins load everyone, then split into contractors (scheduling board) + full team (role mgmt)
   let allProfs = isAdmin ? ((await sb.from('profiles').select('*').order('full_name')).data || []) : [prof];
@@ -311,13 +318,16 @@ async function sbLoadAll(){
     id:p.id, name:p.full_name||'Contractor', initials:initialsOf(p.full_name||'Contractor'),
     cls:CLS[i%CLS.length], zones:p.zones||[], status:p.status||'Active', avail:{}, template:{},
     locked:!!p.avail_locked, lockedTemplate:p.avail_template||null, hourly_rate:p.hourly_rate,
-    score:(p.score==null?6:p.score)
+    score:(p.score==null?6:p.score), email:p.email, birthday:p.birthday, checkins:p.checkins||{}, firstJob:p.first_job
   }));
   state.team = isAdmin ? allProfs.map((p,i)=>({
     id:p.id, name:p.full_name||'(no name)', role:p.role, status:p.status||'Active',
     initials:initialsOf(p.full_name||'?'), cls:CLS[i%CLS.length], rate:p.hourly_rate,
-    score:(p.score==null?6:p.score)
+    score:(p.score==null?6:p.score), email:p.email, birthday:p.birthday, zones:p.zones||[], checkins:p.checkins||{}, firstJob:p.first_job
   })) : null;
+
+  // contractor-only auto messages (run before we fetch messages so they appear immediately)
+  if(!isAdmin){ await maybeDailyMotivation(prof, user.id); await maybeBirthday(prof, user.id); }
 
   const wks = weekStarts();
   const av = (await sb.from('availability').select('*').in('week_start', wks)).data || [];
@@ -338,7 +348,7 @@ async function sbLoadAll(){
   const msgs = (await sb.from('messages').select('*').order('created_at')).data || [];
   if(isAdmin){
     const byC = {};
-    msgs.forEach(m=>{ (byC[m.contractor_id]=byC[m.contractor_id]||[]).push(m); });
+    msgs.filter(m=>(m.kind||'chat')==='chat').forEach(m=>{ (byC[m.contractor_id]=byC[m.contractor_id]||[]).push(m); });  // ignore auto messages in the inbox
     state.adminChats = Object.keys(byC).map(cid=>{
       const c = state.contractors.find(x=>x.id===cid) || {name:'Contractor',initials:'?',cls:''};
       const log = byC[cid].map(m=>({from:m.sender==='contractor'?'me':m.sender,text:m.body,t:new Date(m.created_at).getTime()}));
@@ -347,8 +357,8 @@ async function sbLoadAll(){
         last:last?last.body:'', unread:!!(last && last.sender==='contractor'), log};
     });
   } else {
-    state.chat = msgs.map(m=>({from:m.sender==='contractor'?'me':m.sender,text:m.body,t:new Date(m.created_at).getTime()}));
-    if(state.chat.length===0) state.chat=[{from:'bot',text:BOT_GREETING,t:Date.now()}];
+    state.chat = msgs.map(m=>({from:m.sender==='contractor'?'me':m.sender,text:m.body,kind:m.kind||'chat',t:new Date(m.created_at).getTime()}));
+    if(state.chat.length===0) state.chat=[{from:'bot',text:BOT_GREETING,kind:'chat',t:Date.now()}];
   }
 
   if(isAdmin){
@@ -362,6 +372,51 @@ async function sbLoadAll(){
 function sbDo(p){ Promise.resolve(p).then(r=>{ if(r&&r.error){ console.error(r.error); toast('Save failed — check connection'); } })
   .catch(e=>{ console.error(e); toast('Save failed'); }); }
 async function sbRefresh(){ if(ONLINE){ await sbLoadAll(); render(); } }
+async function maybeDailyMotivation(prof, uid){
+  const today=isoDate(new Date());
+  if(prof.last_motiv_date===today) return;
+  try{
+    await sb.from('messages').insert({contractor_id:uid, sender:'admin', kind:'motivation', body:dailyMotivation()});
+    await sb.from('profiles').update({last_motiv_date:today}).eq('id',uid);
+    prof.last_motiv_date=today;
+  }catch(e){ console.error(e); }
+}
+async function maybeBirthday(prof, uid){
+  if(!prof.birthday) return;
+  const now=new Date(); const b=new Date(prof.birthday+'T00:00:00');
+  if(b.getMonth()!==now.getMonth() || b.getDate()!==now.getDate()) return;
+  if(prof.bday_greeted===now.getFullYear()) return;
+  const first=(prof.full_name||'there').split(' ')[0];
+  const body=`🎉 Happy Birthday, ${first}! Everyone at Done Right Cleaning is wishing you a wonderful day. We're so grateful to have you on the team — thank you for everything you do. Enjoy your day! 🎂`;
+  try{
+    await sb.from('messages').insert({contractor_id:uid, sender:'admin', kind:'birthday', body});
+    await sb.from('profiles').update({bday_greeted:now.getFullYear()}).eq('id',uid);
+    prof.bday_greeted=now.getFullYear();
+  }catch(e){ console.error(e); }
+}
+function markChatRead(){
+  const prev=chatReadAt;
+  chatReadAt=Date.now();
+  if(ONLINE && state.me) sbDo(sb.from('profiles').update({chat_read_at:new Date().toISOString()}).eq('id',state.me.id));
+  return prev;
+}
+function chatUnread(){ return (state.chat||[]).filter(m=>m.from!=='me' && m.t>chatReadAt).length; }
+/* ---------- check-in cadence helpers (timed off their first job date) ---------- */
+function checkinDue(c){
+  const k=c.checkins||{};
+  const fjd=c.firstJob;
+  if(!fjd) return false;                                    // no start date yet → no reminders
+  const now=Date.now(), day=86400000;
+  const start=new Date(fjd+'T00:00:00').getTime();
+  if(!k.pre1||!k.pre2) return true;                         // reach out before they start
+  if(now>=start        && !k.day1)  return true;            // end of first day
+  if(now>=start+7*day  && !k.week1) return true;            // end of first week
+  if(now>=start+30*day){                                    // monthly, once they've been working
+    if(!k.monthlyLast) return true;
+    if(now-new Date(k.monthlyLast+'T00:00:00').getTime() > 30*day) return true;
+  }
+  return false;
+}
 
 /* ---------- seed data ---------- */
 function seed(){
@@ -419,6 +474,8 @@ let session = loadSession();  // {role,name} or null when logged out
 let authMode = 'login';       // 'login' | 'signup'
 let availSnapshot = null;      // availability before an edit (to build change breakdowns)
 let availSnapshotZones = null;
+let profileId = null;          // admin: which contractor profile is open (Team tab)
+let chatReadAt = 0;            // contractor: last time they opened their chat (ms)
 
 /* ---------- week helpers (availability for the next month) ---------- */
 function isoDate(d){ return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
@@ -521,6 +578,8 @@ function renderLogin(){
         <div style="flex:1"><label>First name</label><input id="suFirst" placeholder="First"></div>
         <div style="flex:1"><label>Last name</label><input id="suLast" placeholder="Last"></div>
       </div>
+      <label>Birthday</label>
+      <input id="suBday" type="date">
       <label>Email</label>
       <input id="loginEmail" type="email" placeholder="you@example.com" autocomplete="username">
       <label>Password</label>
@@ -549,13 +608,14 @@ function renderLogin(){
   </div>`;
 }
 async function signUp(){
-  const first=val('suFirst'), last=val('suLast'), email=val('loginEmail'), pass=val('loginPass');
+  const first=val('suFirst'), last=val('suLast'), bday=val('suBday'), email=val('loginEmail'), pass=val('loginPass');
   if(!first||!last){ toast('Please enter your first and last name'); return; }
+  if(!bday){ toast('Please add your birthday'); return; }
   if(!email||!pass){ toast('Enter an email and password'); return; }
   if(!ONLINE){ toast('Sign-up needs the live database'); return; }
   toast('Creating your account…');
   const { data, error } = await sb.auth.signUp({ email, password:pass,
-    options:{ data:{ full_name:(first+' '+last).trim() } } });
+    options:{ data:{ full_name:(first+' '+last).trim(), birthday:bday } } });
   if(error){ toast('Sign-up failed: '+error.message); return; }
   if(data && data.session){          // email confirmation off → straight in
     const ok=await sbLoadAll(); if(ok){ ctab='home'; render(); }
@@ -588,12 +648,14 @@ function render(){
 
 function renderTabbar(){
   const pend = state.premiumOffers.filter(o=>o.status==='pending').length;
+  const cunread = chatUnread();
   const tabs=[['home','Home',ICON.home],['jobs','Jobs',ICON.jobs],
     ['invoices','Invoices',ICON.invoice],['review','Review',ICON.qr],['chat','Chat',ICON.chat],['more','Guide',ICON.more]];
   document.getElementById('tabbar').innerHTML=tabs.map(([id,lbl,ic])=>
     `<button class="${ctab===id?'on':''}" onclick="setTab('${id}')">
        ${svg(ic)}<span>${lbl}</span>
        ${id==='jobs'&&pend?`<span class="badge">${pend}</span>`:''}
+       ${id==='chat'&&cunread?`<span class="badge" style="background:#2563eb">${cunread}</span>`:''}
      </button>`).join('');
 }
 
@@ -606,7 +668,7 @@ function renderContractor(){
   else if(ctab==='jobs') c.innerHTML=viewJobs();
   else if(ctab==='invoices') c.innerHTML=viewInvoices();
   else if(ctab==='review'){ c.innerHTML=viewReview(); buildQR(); }
-  else if(ctab==='chat'){ c.innerHTML=viewChat(); scrollChat(); }
+  else if(ctab==='chat'){ c.innerHTML=viewChat(); scrollChat(); markChatRead(); }
   else if(ctab==='more') c.innerHTML=viewMore();
 }
 function viewReview(){
@@ -795,14 +857,11 @@ Notes: ${inv.notes||'—'}
 function viewChat(){
   return `
   <div class="chatwrap">
-    <div class="notice">💬 The assistant answers instantly. Still stuck? Tap <strong>Text a human</strong> to SMS the office.</div>
-    <div class="chatlog" id="chatlog">
-      <div class="msgmeta">☀️ Daily motivation</div>
-      <div class="msg bot" style="background:#eaf2fb;border-color:#b6d4f0;color:#045ea9;font-weight:500">${dailyMotivation()}</div>
-      ${state.chat.map(renderMsg).join('')}</div>
+    <div class="notice">💬 Message the DRC office here — we'll reply as soon as we can. Tap a question below for a quick answer, or <strong>Text a human</strong> for anything urgent.</div>
+    <div class="chatlog" id="chatlog">${state.chat.map(renderMsg).join('')}</div>
     <div class="quickreplies" id="quick">
       ${['How do I get paid?','What counts as premium pay?','Change my availability','Report a problem']
-        .map(q=>`<button onclick="ask('${q}')">${q}</button>`).join('')}
+        .map(q=>`<button onclick="faqAsk('${q}')">${q}</button>`).join('')}
     </div>
     <button class="btn red" style="margin-bottom:8px" onclick="textHuman()">
       ${svg(ICON.chat)} Text a human (${CONFIG.SUPPORT_PHONE})</button>
@@ -813,22 +872,25 @@ function viewChat(){
   </div>`;
 }
 function renderMsg(m){
+  const unread = m.from!=='me' && m.t>chatReadAt;
+  const dot = unread?'<span class="bluedot" style="position:absolute;right:-15px;top:50%;transform:translateY(-50%)"></span>':'';
+  if(m.kind==='motivation') return `<div class="msgmeta">☀️ Daily motivation</div><div class="msg bot hasdot" style="background:#eaf2fb;border-color:#b6d4f0;color:#045ea9;font-weight:500">${m.text}${dot}</div>`;
+  if(m.kind==='birthday') return `<div class="msgmeta">🎉 From DRC</div><div class="msg bot hasdot" style="background:#fef3c7;border-color:#fde68a;color:#92400e">${m.text}${dot}</div>`;
   const cls=m.from==='me'?'me':(m.from==='admin'?'admin':'bot');
   const who=m.from==='admin'?'<div class="msgmeta">DRC office</div>':'';
-  return `${who}<div class="msg ${cls}">${m.text}</div>`;
+  return `${who}<div class="msg ${cls} hasdot">${m.text}${dot}</div>`;
 }
 function scrollChat(){ const l=document.getElementById('chatlog'); if(l)l.scrollTop=l.scrollHeight; }
 function sendChat(){
   const f=document.getElementById('chatField'); const t=f.value.trim(); if(!t)return;
-  f.value=''; ask(t);
-}
-function ask(text){
-  state.chat.push({from:'me',text,t:Date.now()});
-  if(ONLINE) sbDo(sb.from('messages').insert({contractor_id:state.me.id,sender:'contractor',body:text}));
+  f.value='';
+  state.chat.push({from:'me',text:t,kind:'chat',t:Date.now()});   // goes to the office, no AI reply
+  if(ONLINE) sbDo(sb.from('messages').insert({contractor_id:state.me.id,sender:'contractor',kind:'chat',body:t}));
   render(); scrollChat();
-  setTimeout(()=>{ const reply=botReply(text); state.chat.push({from:'bot',text:reply,t:Date.now()});
-    if(ONLINE) sbDo(sb.from('messages').insert({contractor_id:state.me.id,sender:'bot',body:reply}));
-    render(); scrollChat(); },500);
+}
+function faqAsk(q){   // quick FAQ answer, shown locally only (not sent to the office)
+  state.chat.push({from:'bot',text:botReply(q),kind:'faq',t:Date.now()});
+  render(); scrollChat();
 }
 function botReply(q){
   q=q.toLowerCase();
@@ -1097,7 +1159,7 @@ function submitIncident(){
 /* ============================================================
    ADMIN VIEWS
    ============================================================ */
-function setAdminTab(t){ adminTab=t; render(); }
+function setAdminTab(t){ adminTab=t; profileId=null; render(); }
 function renderAdmin(){
   const c=document.getElementById('content');
   if(activeAdminChat){ c.innerHTML=adminChatView(); scrollChat(); return; }
@@ -1110,7 +1172,7 @@ function renderAdmin(){
     <button class="btn ${adminTab==='notifications'?'primary':'ghost'}" style="padding:10px 6px;font-size:13px" onclick="setAdminTab('notifications')">Alerts${newNotifs?` · ${newNotifs}`:''}</button>
   </div>`;
   const body = adminTab==='invoices'      ? adminInvoicesView()
-             : adminTab==='team'          ? adminTeamView()
+             : adminTab==='team'          ? (profileId ? adminProfileView(profileId) : adminTeamView())
              : adminTab==='notifications' ? adminNotificationsView()
              : adminDashboard();
   c.innerHTML = nav + body;
@@ -1132,7 +1194,7 @@ function adminDashboard(){
       <div class="row"><div class="avatar ${ch.cls}">${ch.initials}</div>
         <div style="min-width:0"><h3 style="font-size:15px;margin:0">${ch.contractor}</h3>
           <div class="muted" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:210px">${ch.last}</div></div></div>
-      ${ch.unread?`<span class="pill red">New</span>`:`<span class="pill gray">Open</span>`}
+      ${ch.unread?`<span class="row" style="gap:7px"><span class="pill red">New</span><span class="bluedot"></span></span>`:`<span class="pill gray">Open</span>`}
     </div>`).join(''):`<div class="card muted">No conversations yet.</div>`}</div>
 
   <div class="spread"><h2 class="section">Extra assignments</h2></div>
@@ -1167,17 +1229,32 @@ function adminInvoicesView(){
   ${list.length?list.map(adminInvoiceCard).join('')
     :`<div class="card muted">No ${invFilter==='all'?'':invFilter+' '}invoices.</div>`}
   <h2 class="section">Pay sheet</h2>
+  <p class="muted" style="margin:-4px 0 8px;font-size:13px">Only <strong>unpaid</strong> invoices, <strong>combined per contractor</strong> — so each person's weekly invoices add up to one biweekly payout.</p>
   <div class="btnrow">
     <button class="btn ghost" onclick="downloadPaySheet()">${svg('<path d="M12 3v12M7 10l5 5 5-5M5 21h14"/>')} Download CSV</button>
     <button class="btn ghost" onclick="emailPaySheet()">${svg('<path d="M4 4h16v16H4z"/><path d="M4 6l8 6 8-6"/>')} Email to office</button>
   </div>
   `;
 }
+function paySheetGroups(){
+  // combine every UNPAID invoice per contractor (weekly invoices → one biweekly payout)
+  const byC={};
+  (state.invoices||[]).filter(inv=>!inv.paid).forEach(inv=>{
+    const id=inv.contractorId;
+    const g=byC[id]||(byC[id]={id,name:inv.contractor||'',hours:0,prem:0,total:0,weeks:0,rate:rateOf(id),start:null,end:null,missing:false});
+    g.hours+=Number(inv.hours||0); g.prem+=Number(inv.premiumHours||0); g.weeks++;
+    const t=invoiceTotal(inv); if(t) g.total+=t.total; else g.missing=true;
+    if(inv.start && (!g.start||inv.start<g.start)) g.start=inv.start;
+    if(inv.end   && (!g.end||inv.end>g.end))       g.end=inv.end;
+  });
+  return Object.values(byC);
+}
 function paySheetRows(){
-  const rows=[['Contractor','Week start','Week end','Regular hrs','Premium hrs','Rate','Total due','Status']];
-  (state.invoices||[]).forEach(inv=>{ const t=invoiceTotal(inv);
-    rows.push([inv.contractor||'', inv.start||'', inv.end||'', inv.hours||0, inv.premiumHours||0,
-      t?t.rate.toFixed(2):'', t?t.total.toFixed(2):'', inv.paid?'Paid':'Unpaid']); });
+  const rows=[['Contractor','Period','Weeks','Regular hrs','Premium hrs','Rate','Total due']];
+  paySheetGroups().forEach(g=>{
+    rows.push([g.name, (g.start||'')+' → '+(g.end||''), g.weeks, g.hours, g.prem,
+      g.rate!=null?g.rate.toFixed(2):'', g.missing?'rate not set':g.total.toFixed(2)]);
+  });
   return rows;
 }
 function downloadPaySheet(){
@@ -1191,55 +1268,143 @@ function downloadPaySheet(){
   }catch(e){ toast('Could not generate file'); }
 }
 function emailPaySheet(){
-  let body='DRC weekly pay sheet\n\n';
-  (state.invoices||[]).forEach(inv=>{ const t=invoiceTotal(inv);
-    body+=`${inv.contractor}: ${inv.hours||0}h regular`+(inv.premiumHours?` + ${inv.premiumHours}h premium`:'')
-       +(t?` = $${t.total.toFixed(2)}`:' (rate not set)')+(inv.paid?' [paid]':'')+'\n'; });
-  window.location.href=`mailto:${CONFIG.OFFICE_EMAIL}?subject=${encodeURIComponent('DRC weekly pay sheet')}&body=${encodeURIComponent(body)}`;
+  const groups=paySheetGroups();
+  let body='DRC pay sheet — amounts owing (unpaid invoices combined per contractor)\n\n';
+  if(!groups.length) body+='(No unpaid invoices.)\n';
+  let grand=0;
+  groups.forEach(g=>{ if(!g.missing) grand+=g.total;
+    body+=`${g.name}: ${g.hours}h regular`+(g.prem?` + ${g.prem}h premium`:'')+` over ${g.weeks} week${g.weeks>1?'s':''}`
+       +(g.missing?' (rate not set)':` = $${g.total.toFixed(2)}`)+'\n'; });
+  if(groups.length) body+=`\nTotal to pay out: $${grand.toFixed(2)}\n`;
+  window.location.href=`mailto:${CONFIG.OFFICE_EMAIL}?subject=${encodeURIComponent('DRC pay sheet — amounts owing')}&body=${encodeURIComponent(body)}`;
 }
 function setAdminWeek(i){ adminWeek=i; render(); }
 function adminTeamView(){
-  const all = state.team || (state.contractors||[]).map(c=>({id:c.id,name:c.name,role:c.role||'contractor',status:c.status||'Active',initials:c.initials,cls:c.cls,rate:c.hourly_rate}));
+  const all = state.team || (state.contractors||[]).map(c=>({id:c.id,name:c.name,role:c.role||'contractor',status:c.status||'Active',initials:c.initials,cls:c.cls,rate:c.hourly_rate,score:c.score,checkins:c.checkins,zones:c.zones,email:c.email,birthday:c.birthday,firstJob:c.firstJob}));
   const active = all.filter(m=>m.status!=='Removed');
   const removed = all.filter(m=>m.status==='Removed');
-  const card = (m,i)=>{
-    const self = session && m.id===session.id;
-    return `<div class="card">
-      <div class="spread">
-        <div class="row"><div class="avatar ${m.cls||CLS[i%CLS.length]}">${m.initials}</div>
-          <div><h3 style="font-size:15px;margin:0">${m.name}</h3>
-            <span class="pill ${m.role==='admin'?'blue':'gray'}">${m.role==='admin'?'Admin':'Contractor'}</span></div></div>
-        ${self?`<span class="muted" style="font-size:12px">You</span>`:''}
+  const caution='<path d="M12 9v4M12 17h.01M10.3 3.9L1.8 18a2 2 0 001.7 3h17a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z"/>';
+  const row = (m,i)=>{
+    const due = (m.role||'contractor')==='contractor' && checkinDue(m);
+    return `<div class="card spread" style="cursor:pointer" onclick="openProfile('${m.id}')">
+      <div class="row"><div class="avatar ${m.cls||CLS[i%CLS.length]}">${m.initials}</div>
+        <div><h3 style="font-size:15px;margin:0">${m.name}</h3>
+          <div class="row" style="gap:6px;margin-top:3px">
+            <span class="pill ${m.role==='admin'?'blue':'gray'}">${m.role==='admin'?'Admin':'Contractor'}</span>
+            ${(m.role||'contractor')==='contractor'?`<span class="pill ${scoreCls(m.score)}">${m.score??6}/10</span>`:''}
+            ${m.rate!=null?`<span class="muted" style="font-size:12px">$${Number(m.rate).toFixed(2)}/hr</span>`:''}
+          </div></div></div>
+      <div class="row" style="gap:9px">
+        ${due?`<span title="Check-in due" style="color:var(--red)">${svg(caution)}</span>`:''}
+        <span class="muted">${svg('<path d="M9 18l6-6-6-6"/>')}</span>
       </div>
-      ${m.role==='contractor'?`<div class="spread" style="margin-top:11px">
-        <span class="muted" style="font-size:13px">Hourly pay</span>
-        <div class="row" style="gap:6px"><span class="muted">$</span>
-          <input id="rate_${m.id}" type="number" inputmode="decimal" step="0.25" value="${m.rate??''}" placeholder="0.00" style="width:78px;margin:0;padding:8px">
-          <span class="muted">/hr</span>
-          <button class="btn ghost sm" onclick="setRate('${m.id}')">Save</button></div>
-      </div>
-      <div class="spread" style="margin-top:9px">
-        <span class="muted" style="font-size:13px">Score <span class="pill ${scoreCls(m.score)}">${m.score??6}/10</span></span>
-        <div class="row" style="gap:6px">
-          <input id="score_${m.id}" type="number" min="1" max="10" step="1" value="${m.score??6}" style="width:64px;margin:0;padding:8px">
-          <button class="btn ghost sm" onclick="setScore('${m.id}')">Save</button></div>
-      </div>`:''}
-      ${self?'':`<div class="btnrow" style="margin-top:11px">
-        <button class="btn ${m.role==='admin'?'ghost':'primary'}" onclick="toggleAdminRole('${m.id}')">${m.role==='admin'?'Make contractor':'Make admin'}</button>
-        <button class="btn red" onclick="removeUser('${m.id}')">Remove</button>
-      </div>`}
     </div>`;
   };
   return `
-  <h2 class="section">Team & roles</h2>
-  <div class="notice">Promote a contractor to admin, switch them back, or remove their access. Removing is reversible — past invoices stay on record.</div>
-  ${active.length?active.map(card).join(''):`<div class="card muted">No active team members.</div>`}
+  <h2 class="section">Team</h2>
+  <div class="notice">Tap a contractor to open their profile — set pay & rating, view their details, and track check-ins. A red ⚠ means a check-in is due.</div>
+  ${active.length?active.map(row).join(''):`<div class="card muted">No active team members.</div>`}
   ${removed.length?`<h2 class="section">Removed</h2>${removed.map((m,i)=>`
     <div class="card spread">
       <div class="row"><div class="avatar gray">${m.initials}</div>
         <div><h3 style="font-size:15px;margin:0">${m.name}</h3><span class="muted" style="font-size:12px">No access</span></div></div>
       <button class="btn ghost sm" onclick="restoreUser('${m.id}')">Restore</button>
     </div>`).join('')}`:''}
+  `;
+}
+function openProfile(id){ profileId=id; render(); }
+function backToTeam(){ profileId=null; render(); }
+function fmtDate(d){ if(!d) return '—'; try{ const s=String(d); return new Date(s.length<=10?s+'T00:00:00':s).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}); }catch(e){ return d; } }
+function addDays(d,n){ const x=new Date(d+'T00:00:00'); x.setDate(x.getDate()+n); return isoDate(x); }
+function overdue(d){ return (Date.now()-new Date(d+'T00:00:00').getTime())>30*86400000; }
+function checkRow(id,key,done,label){
+  return `<div class="checkrow2 ${done?'done':''}" onclick="setCheckin('${id}','${key}')">
+    <span class="cb">${svg('<path d="M20 6L9 17l-5-5"/>')}</span><span>${label}</span></div>`;
+}
+async function setCheckin(id,key){
+  const m=(state.team||[]).find(x=>x.id===id)||(state.contractors||[]).find(x=>x.id===id); if(!m)return;
+  m.checkins=Object.assign({},m.checkins); m.checkins[key]=!m.checkins[key];
+  const o=(state.contractors||[]).find(x=>x.id===id); if(o) o.checkins=m.checkins;
+  if(ONLINE){ const {error}=await sb.from('profiles').update({checkins:m.checkins}).eq('id',id); if(error){toast('Save failed: '+error.message);return;} }
+  render();
+}
+async function markMonthly(id){
+  const m=(state.team||[]).find(x=>x.id===id)||(state.contractors||[]).find(x=>x.id===id); if(!m)return;
+  m.checkins=Object.assign({},m.checkins); m.checkins.monthlyLast=isoDate(new Date());
+  const o=(state.contractors||[]).find(x=>x.id===id); if(o) o.checkins=m.checkins;
+  if(ONLINE){ const {error}=await sb.from('profiles').update({checkins:m.checkins}).eq('id',id); if(error){toast('Save failed: '+error.message);return;} }
+  toast('Monthly check-in recorded ✓'); render();
+}
+async function setFirstJob(id){
+  const v=val('fjd_'+id);
+  const m=(state.team||[]).find(x=>x.id===id)||(state.contractors||[]).find(x=>x.id===id); if(!m)return;
+  m.firstJob=v||null;
+  const o=(state.contractors||[]).find(x=>x.id===id); if(o) o.firstJob=m.firstJob;
+  if(ONLINE){ const {error}=await sb.from('profiles').update({first_job:v||null}).eq('id',id); if(error){toast('Save failed: '+error.message);return;} }
+  toast('First job date saved ✓'); render();
+}
+function adminProfileView(id){
+  const m=(state.team||[]).find(x=>x.id===id)||(state.contractors||[]).find(x=>x.id===id);
+  if(!m) return `<button class="btn ghost sm" onclick="backToTeam()">‹ Team</button><div class="card muted" style="margin-top:10px">Profile not found.</div>`;
+  const isContractor=(m.role||'contractor')==='contractor';
+  const self=session && m.id===session.id;
+  const k=m.checkins||{};
+  const yr=new Date().getFullYear();
+  const invs=(state.invoices||[]).filter(iv=>iv.contractorId===id && String(iv.start||'').slice(0,4)===String(yr));
+  let earn=0; invs.forEach(iv=>{ const t=invoiceTotal(iv); if(t) earn+=t.total; });
+  return `
+  <button class="btn ghost sm" onclick="backToTeam()">‹ Team</button>
+  <div class="card" style="margin-top:10px">
+    <div class="row"><div class="avatar ${m.cls}">${m.initials}</div>
+      <div><h3 style="margin:0">${m.name}</h3>
+        <span class="pill ${m.role==='admin'?'blue':'gray'}">${m.role==='admin'?'Admin':'Contractor'}</span></div></div>
+    <div class="divider"></div>
+    <table style="width:100%;font-size:14px">
+      <tr><td class="muted" style="padding:5px 0">Email</td><td style="text-align:right">${m.email||'—'}</td></tr>
+      <tr><td class="muted" style="padding:5px 0">Birthday</td><td style="text-align:right">${m.birthday?fmtDate(m.birthday):'—'}</td></tr>
+      <tr><td class="muted" style="padding:5px 0">Service zones</td><td style="text-align:right">${(m.zones&&m.zones.length)?m.zones.join(', '):'—'}</td></tr>
+      <tr><td class="muted" style="padding:5px 0">Earnings ${yr}</td><td style="text-align:right;font-weight:700">$${earn.toFixed(2)}</td></tr>
+    </table>
+  </div>
+  ${isContractor?`
+  <h2 class="section">Pay & rating</h2>
+  <div class="card">
+    <div class="spread"><span class="muted" style="font-size:13px">Hourly pay</span>
+      <div class="row" style="gap:6px"><span class="muted">$</span>
+        <input id="rate_${m.id}" type="number" step="0.25" value="${m.rate??''}" placeholder="0.00" style="width:80px;margin:0;padding:8px"><span class="muted">/hr</span>
+        <button class="btn ghost sm" onclick="setRate('${m.id}')">Save</button></div></div>
+    <div class="spread" style="margin-top:10px"><span class="muted" style="font-size:13px">Score <span class="pill ${scoreCls(m.score)}">${m.score??6}/10</span></span>
+      <div class="row" style="gap:6px">
+        <input id="score_${m.id}" type="number" min="1" max="10" step="1" value="${m.score??6}" style="width:64px;margin:0;padding:8px">
+        <button class="btn ghost sm" onclick="setScore('${m.id}')">Save</button></div></div>
+  </div>
+  <h2 class="section">Check-in cadence</h2>
+  <div class="card">
+    <div class="spread"><span class="muted" style="font-size:13px">First job date</span>
+      <div class="row" style="gap:6px">
+        <input id="fjd_${m.id}" type="date" value="${m.firstJob||''}" style="width:150px;margin:0;padding:8px">
+        <button class="btn ghost sm" onclick="setFirstJob('${m.id}')">Save</button></div></div>
+    <div class="muted" style="font-size:12px;margin-top:6px">${m.firstJob?`Reminders are timed from ${fmtDate(m.firstJob)}.`:'Set this so the system knows when check-ins come due.'}</div>
+  </div>
+  ${checkinDue(m)?`<div class="notice" style="background:var(--red-bg);border-color:#fecaca;color:#991b1b">⚠ A check-in is due for ${m.name.split(' ')[0]}.</div>`:''}
+  <p class="muted" style="margin:0 0 8px;font-size:13px;font-weight:600">Before they start</p>
+  ${checkRow(id,'pre1',k.pre1,'Reach out #1 — answer their questions')}
+  ${checkRow(id,'pre2',k.pre2,'Reach out #2 — make sure they\'re comfortable with everything')}
+  <p class="muted" style="margin:14px 0 8px;font-size:13px;font-weight:600">When they start</p>
+  ${checkRow(id,'day1',k.day1,'Check in at the end of their first day')}
+  ${checkRow(id,'week1',k.week1,'Check in at the end of their first week')}
+  <p class="muted" style="margin:14px 0 8px;font-size:13px;font-weight:600">Once they've been working</p>
+  <div class="card">
+    <strong style="font-size:14px">Monthly check-in</strong>
+    <div class="muted" style="font-size:12px">Ask how they're doing, how they're feeling, and if they have any questions.</div>
+    <div class="muted" style="font-size:12px;margin-top:6px">Last done: ${k.monthlyLast?fmtDate(k.monthlyLast):'never'}${k.monthlyLast?` · next due ${fmtDate(addDays(k.monthlyLast,30))}`:''}</div>
+    <button class="btn ${(!k.monthlyLast||overdue(k.monthlyLast))?'primary':'ghost'}" style="margin-top:10px" onclick="markMonthly('${id}')">Mark monthly check-in done today</button>
+  </div>`:''}
+  ${self?'':`<h2 class="section">Manage</h2>
+  <div class="btnrow">
+    <button class="btn ${m.role==='admin'?'ghost':'primary'}" onclick="toggleAdminRole('${m.id}')">${m.role==='admin'?'Make contractor':'Make admin'}</button>
+    <button class="btn red" onclick="removeUser('${m.id}')">Remove</button>
+  </div>`}
   `;
 }
 async function toggleAdminRole(id){
