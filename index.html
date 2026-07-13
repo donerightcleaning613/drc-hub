@@ -226,6 +226,9 @@ const CONFIG = {
   OFFICE_EMAIL: "contact@donerightcleaning.ca", // invoices are emailed here on submit
   REVIEW_URL: "https://g.page/r/CS4XjoAlEYTgEBM/review", // Google review link (QR on Review tab)
   PREMIUM_RATE: 27,                     // $/hr paid for premium (short-notice) hours
+  REVIEW_RATE: 20,                      // $ bonus per 5-star Google review
+  REVIEW_MILESTONE: 50,                 // $ bonus for hitting the monthly review milestone
+  REVIEW_MILESTONE_COUNT: 5,            // reviews in a month needed for the milestone
   GUIDE_VIDEO_FILE: "jobber-guide.mp4", // a video file kept next to this HTML (plays in-app)
   GUIDE_VIDEO_URL: "",                  // OR paste a YouTube/Vimeo link instead
 
@@ -274,7 +277,12 @@ const MOTIVATIONS = [
   "Attention to detail today = a five-star review tomorrow.",
   "Be proud of your work. You make homes healthier and happier.",
   "Stay safe, stay sharp, and take care of yourself out there.",
-  "You bring the shine. Go have an amazing day!"
+  "You bring the shine. Go have an amazing day!",
+  "Every 5-star Google review = $20 in your pocket. Ask on every job! ⭐",
+  "Five reviews in a month earns you a $50 bonus — keep asking, you've got this!",
+  "Best time to ask for a review? Right after the final walkthrough.",
+  "Happy customer? Hand them the review code — it pays you $20 per 5 stars.",
+  "Don't be shy — most customers are glad to leave a review when you simply ask."
 ];
 function dayOfYear(d){ const s=new Date(d.getFullYear(),0,0); return Math.floor((d-s)/86400000); }
 function dailyMotivation(){ return MOTIVATIONS[dayOfYear(new Date()) % MOTIVATIONS.length]; }
@@ -341,7 +349,8 @@ async function sbLoadAll(){
   state.invoices = inv.map(i=>({id:i.id,contractorId:i.contractor_id,contractor:i.contractor_name,
     start:i.week_start,end:i.week_end,hours:Number(i.hours)||0,premiumHours:Number(i.premium_hours)||0,
     notes:i.notes||'',paid:!!i.paid,status:i.paid?'Paid':'Submitted',
-    bonus:Number(i.bonus)||0,bonusNote:i.bonus_note||''}));
+    bonus:Number(i.bonus)||0,bonusNote:i.bonus_note||'',
+    reviewCount:Number(i.review_count)||0,milestone:Number(i.milestone)||0}));
 
   const inc = (await sb.from('incidents').select('*').order('created_at',{ascending:false})).data || [];
   state.incidents = inc.map(r=>({id:r.id,type:r.type,where:r.where_text,date:r.occurred_on,desc:r.description}));
@@ -673,9 +682,27 @@ function renderContractor(){
   else if(ctab==='more') c.innerHTML=viewMore();
 }
 function viewReview(){
+  const rs=reviewStats();
+  const pct=Math.min(100, Math.round((rs.monthC/rs.need)*100));
+  const left=Math.max(0, rs.need-rs.monthC);
   return `
-  <h2 class="section">Leave us a review</h2>
-  <div class="notice">When you finish a clean, ask the customer to scan this code to leave a Google review — it opens our review page on their phone.</div>
+  <div style="background:#045ea9;border-radius:16px;padding:16px;text-align:center;color:#fff;margin-bottom:12px">
+    <div style="font-size:13px;opacity:.9">Earn</div>
+    <div style="font-size:26px;font-weight:800;line-height:1.15">$${CONFIG.REVIEW_RATE} <span style="font-size:15px;font-weight:500;opacity:.9">/ 5-star review</span></div>
+    <div style="font-size:13px;opacity:.92">plus a $${CONFIG.REVIEW_MILESTONE} bonus for ${CONFIG.REVIEW_MILESTONE_COUNT} reviews in a month</div>
+  </div>
+  <div class="card">
+    <div class="spread"><span style="font-size:13px;font-weight:500;color:#0f172a">This month: ${rs.monthC} of ${rs.need}</span>
+      <span style="font-size:12px;color:#16a34a">$${CONFIG.REVIEW_MILESTONE} at ${rs.need}</span></div>
+    <div style="height:10px;border-radius:999px;background:#e5e7eb;overflow:hidden;margin-top:8px"><div style="height:100%;width:${pct}%;background:#16a34a;border-radius:999px"></div></div>
+    <div class="muted" style="font-size:12px;margin-top:8px">${left>0?`${left} more this month unlocks your $${CONFIG.REVIEW_MILESTONE} milestone bonus.`:`🎉 Milestone hit — you earned the $${CONFIG.REVIEW_MILESTONE} bonus this month!`}</div>
+  </div>
+  <div class="card spread">
+    <div><div class="muted" style="font-size:12px">Your reviews this year</div><div style="font-weight:600;color:#0f172a">${rs.yearC}</div></div>
+    <div style="text-align:right"><div class="muted" style="font-size:12px">Bonuses earned (lifetime)</div><div style="font-size:17px;font-weight:800;color:#16a34a">$${rs.lifeEarned.toFixed(2)}</div></div>
+  </div>
+
+  <h2 class="section">Show the customer this code</h2>
   <div class="card" style="text-align:center">
     <div id="qrbox" style="display:flex;justify-content:center;padding:6px"></div>
     <p class="muted" style="margin:12px 0 0">Have the customer point their phone camera at the code.</p>
@@ -684,8 +711,8 @@ function viewReview(){
 
   <h2 class="section">How to ask for a review</h2>
   <div class="card" style="background:#eaf2fb;border:1px solid #b6d4f0">
-    <strong style="color:#045ea9">💸 You earn a bonus for every review</strong>
-    <p class="muted" style="margin:4px 0 0">A customer review left from your code earns you a bonus — so it's worth asking on every job.</p>
+    <strong style="color:#045ea9">💸 $${CONFIG.REVIEW_RATE} for every 5-star review — the more you ask, the more you earn</strong>
+    <p class="muted" style="margin:4px 0 0">Every customer is worth asking. The #1 way to more reviews is simply to ask — on every job.</p>
   </div>
   <div class="card">
     ${[
@@ -740,6 +767,14 @@ function viewHome(){
     <div class="row"><span class="pill amber">${pend} extra assignment${pend>1?'s':''}</span>
     <span class="muted">Tap to accept or decline</span></div>${svg('<path d="M9 18l6-6-6-6"/>')}
   </div>`:`<div class="card muted">No extra assignments right now 🎉</div>`}
+
+  <h2 class="section">Earn more</h2>
+  <div onclick="setTab('review')" style="cursor:pointer;background:#045ea9;border-radius:14px;padding:15px;color:#fff">
+    <div style="display:flex;align-items:center;gap:8px;font-weight:600;font-size:15px">⭐ Get paid for 5-star reviews</div>
+    <div style="font-size:13px;opacity:.94;margin-top:6px;line-height:1.5"><strong>$${CONFIG.REVIEW_RATE}</strong> for every 5-star Google review from your jobs — plus a <strong>$${CONFIG.REVIEW_MILESTONE}</strong> bonus for ${CONFIG.REVIEW_MILESTONE_COUNT} in a month.</div>
+    <div style="font-size:13px;opacity:.94;margin-top:8px;line-height:1.5">The secret? <strong>Just ask every customer.</strong> Tap to learn exactly how.</div>
+    <div style="background:#fff;color:#045ea9;border-radius:10px;text-align:center;font-size:13px;font-weight:600;padding:10px;margin-top:12px">Learn how to get reviews →</div>
+  </div>
 
   <h2 class="section">Quick actions</h2>
   <div class="btnrow" style="margin-bottom:10px">
@@ -1206,6 +1241,10 @@ function adminDashboard(){
       <span class="pill ${o.status==='pending'?'amber':(o.status==='accepted'?'green':'gray')}">${o.status}</span></div>
       <div class="muted">${o.date} · ${o.pay} → offered to ${c?c.name:'?'}</div></div>`;}).join('')}</div>`:''}
 
+  <h2 class="section">Review leaderboard — this month</h2>
+  <p class="muted" style="margin-top:-4px">5-star reviews logged on invoices this month. Give the top performers a shout-out!</p>
+  ${reviewLeaderboard()}
+
   <h2 class="section">Scheduling board — availability & zones</h2>
   <p class="muted" style="margin-top:-4px">Everyone's availability for the selected week.</p>
   <div class="zonechips" style="margin-bottom:10px">${weekStarts().map((ws,i)=>`
@@ -1213,6 +1252,21 @@ function adminDashboard(){
       onclick="setAdminWeek(${i})">${i===0?'This week · ':(i===1?'Next week · ':'')}${weekLabel(ws)}</span>`).join('')}</div>
   ${state.contractors.map(adminContractorCard).join('')}
   `;
+}
+function reviewLeaderboard(){
+  const mo=isoDate(new Date()).slice(0,7);
+  const byC={};
+  (state.invoices||[]).forEach(iv=>{ if((iv.start||'').slice(0,7)!==mo) return;
+    byC[iv.contractorId]=(byC[iv.contractorId]||0)+Number(iv.reviewCount||0); });
+  const list=(state.contractors||[]).map(c=>({name:c.name,cls:c.cls,initials:c.initials,n:byC[c.id]||0}))
+    .filter(x=>x.n>0).sort((a,b)=>b.n-a.n);
+  if(!list.length) return `<div class="card muted">No reviews logged yet this month.</div>`;
+  const medal=['🥇','🥈','🥉'];
+  return list.map((x,i)=>`<div class="card spread">
+    <div class="row"><span style="width:24px;text-align:center;font-weight:700;color:#94a3b8">${medal[i]||(i+1)}</span>
+      <div class="avatar ${x.cls}">${x.initials}</div><strong>${x.name}</strong></div>
+    <span class="pill green">${x.n} review${x.n>1?'s':''}</span>
+  </div>`).join('');
 }
 function setInvFilter(f){ invFilter=f; render(); }
 function adminInvoicesView(){
@@ -1242,19 +1296,19 @@ function paySheetGroups(){
   const byC={};
   (state.invoices||[]).filter(inv=>!inv.paid).forEach(inv=>{
     const id=inv.contractorId;
-    const g=byC[id]||(byC[id]={id,name:inv.contractor||'',hours:0,prem:0,bonus:0,total:0,weeks:0,rate:rateOf(id),start:null,end:null,missing:false});
-    g.hours+=Number(inv.hours||0); g.prem+=Number(inv.premiumHours||0); g.bonus+=Number(inv.bonus||0); g.weeks++;
-    const t=invoiceTotal(inv); if(t) g.total+=t.total; else g.missing=true;
+    const g=byC[id]||(byC[id]={id,name:inv.contractor||'',hours:0,prem:0,tip:0,reviewBonus:0,total:0,weeks:0,rate:rateOf(id),start:null,end:null,missing:false});
+    g.hours+=Number(inv.hours||0); g.prem+=Number(inv.premiumHours||0); g.tip+=Number(inv.bonus||0); g.weeks++;
+    const t=invoiceTotal(inv); if(t){ g.total+=t.total; g.reviewBonus+=t.reviewsAmt+t.milestone; } else g.missing=true;
     if(inv.start && (!g.start||inv.start<g.start)) g.start=inv.start;
     if(inv.end   && (!g.end||inv.end>g.end))       g.end=inv.end;
   });
   return Object.values(byC);
 }
 function paySheetRows(){
-  const rows=[['Contractor','Period','Weeks','Regular hrs','Premium hrs','Rate','Tips/Bonus','Total due']];
+  const rows=[['Contractor','Period','Weeks','Regular hrs','Premium hrs','Rate','Tips','Review bonuses','Total due']];
   paySheetGroups().forEach(g=>{
     rows.push([g.name, (g.start||'')+' → '+(g.end||''), g.weeks, g.hours, g.prem,
-      g.rate!=null?g.rate.toFixed(2):'', (g.bonus||0).toFixed(2), g.missing?'rate not set':g.total.toFixed(2)]);
+      g.rate!=null?g.rate.toFixed(2):'', (g.tip||0).toFixed(2), (g.reviewBonus||0).toFixed(2), g.missing?'rate not set':g.total.toFixed(2)]);
   });
   return rows;
 }
@@ -1274,7 +1328,7 @@ function emailPaySheet(){
   if(!groups.length) body+='(No unpaid invoices.)\n';
   let grand=0;
   groups.forEach(g=>{ if(!g.missing) grand+=g.total;
-    body+=`${g.name}: ${g.hours}h regular`+(g.prem?` + ${g.prem}h premium`:'')+(g.bonus?` + $${g.bonus.toFixed(2)} tip/bonus`:'')+` over ${g.weeks} week${g.weeks>1?'s':''}`
+    body+=`${g.name}: ${g.hours}h regular`+(g.prem?` + ${g.prem}h premium`:'')+(g.reviewBonus?` + $${g.reviewBonus.toFixed(2)} review bonuses`:'')+(g.tip?` + $${g.tip.toFixed(2)} tips`:'')+` over ${g.weeks} week${g.weeks>1?'s':''}`
        +(g.missing?' (rate not set)':` = $${g.total.toFixed(2)}`)+'\n'; });
   if(groups.length) body+=`\nTotal to pay out: $${grand.toFixed(2)}\n`;
   window.location.href=`mailto:${CONFIG.OFFICE_EMAIL}?subject=${encodeURIComponent('DRC pay sheet — amounts owing')}&body=${encodeURIComponent(body)}`;
@@ -1472,8 +1526,12 @@ function invoiceTotal(inv){
   if(rate==null || isNaN(rate)) return null;
   const reg=Number(inv.hours||0)*rate;
   const prem=Number(inv.premiumHours||0)*Number(CONFIG.PREMIUM_RATE||0);
-  const bonus=Number(inv.bonus||0);
-  return { rate, reg, prem, bonus, total:reg+prem+bonus };
+  const tip=Number(inv.bonus||0);
+  const reviewCount=Number(inv.reviewCount||0);
+  const reviewsAmt=reviewCount*Number(CONFIG.REVIEW_RATE||0);
+  const milestone=Number(inv.milestone||0);
+  return { rate, reg, prem, tip, reviewCount, reviewsAmt, milestone, bonus:tip+reviewsAmt+milestone,
+           total:reg+prem+tip+reviewsAmt+milestone };
 }
 function timeAgo(t){
   const s=Math.floor((Date.now()-t)/1000);
@@ -1520,13 +1578,24 @@ function adminInvoiceCard(inv){
       <span class="muted">${inv.hours||0} regular${prem}</span></div>
     ${(()=>{ const t=invoiceTotal(inv);
       return t? `<div style="margin-top:8px;font-size:16px;font-weight:700;color:#0f172a">Total due: $${t.total.toFixed(2)}</div>
-        <div class="muted" style="font-size:12px">${inv.hours||0} hrs × $${t.rate.toFixed(2)}${inv.premiumHours?` + ${inv.premiumHours} premium × $${Number(CONFIG.PREMIUM_RATE).toFixed(2)}`:''}${t.bonus?` + $${t.bonus.toFixed(2)} tip/bonus`:''}</div>`
+        <div class="muted" style="font-size:12px">${inv.hours||0} hrs × $${t.rate.toFixed(2)}${inv.premiumHours?` + ${inv.premiumHours} premium × $${Number(CONFIG.PREMIUM_RATE).toFixed(2)}`:''}${t.reviewsAmt?` + ${t.reviewCount} review${t.reviewCount>1?'s':''} × $${Number(CONFIG.REVIEW_RATE).toFixed(2)}`:''}${t.milestone?` + $${t.milestone.toFixed(2)} milestone`:''}${t.tip?` + $${t.tip.toFixed(2)} tip`:''}</div>`
         : `<div class="muted" style="margin-top:8px;font-size:12px">Set this contractor's hourly pay on the Team tab to see total due.</div>`; })()}
     <div style="margin-top:10px;background:#f8fafc;border:1px solid var(--line);border-radius:10px;padding:9px 11px;font-size:13px">
       <span style="font-weight:600">📝 Notes:</span> ${inv.notes?inv.notes:'<span class="muted">No notes left</span>'}
     </div>
+    <div style="margin-top:10px;background:#ecfdf3;border:1px solid #bbe3cc;border-radius:10px;padding:10px 11px">
+      <div class="spread">
+        <div><div style="font-size:12px;font-weight:600;color:#166534">⭐ 5-star reviews · +$${CONFIG.REVIEW_RATE} each</div>
+          <div class="muted" style="font-size:11px">${inv.milestone?`+ $${inv.milestone} monthly milestone earned 🎉`:`$${CONFIG.REVIEW_MILESTONE} bonus at ${CONFIG.REVIEW_MILESTONE_COUNT} reviews/month`}</div></div>
+        <div class="row" style="gap:10px">
+          <button class="btn ghost sm" onclick="setReviews('${inv.id}',-1)">−</button>
+          <strong style="min-width:16px;text-align:center;font-size:16px">${inv.reviewCount||0}</strong>
+          <button class="btn ghost sm" onclick="setReviews('${inv.id}',1)">+</button>
+        </div>
+      </div>
+    </div>
     <div style="margin-top:10px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:9px 11px">
-      <div class="muted" style="font-size:12px;font-weight:600;margin-bottom:6px">💰 Tip / bonus (added to this invoice's pay)</div>
+      <div class="muted" style="font-size:12px;font-weight:600;margin-bottom:6px">💵 Tip (manual — added to this invoice's pay)</div>
       <div class="row" style="gap:6px">
         <span class="muted">$</span>
         <input id="bonus_${inv.id}" type="number" step="0.01" value="${inv.bonus?inv.bonus:''}" placeholder="0.00" style="width:78px;margin:0;padding:8px">
@@ -1542,6 +1611,41 @@ function togglePaid(id){ const inv=state.invoices.find(x=>x.id===id); if(!inv)re
   inv.paid=!inv.paid; inv.status=inv.paid?'Paid':'Submitted';
   if(ONLINE) sbDo(sb.from('invoices').update({paid:inv.paid}).eq('id',id));
   toast(inv.paid?'Marked paid ✓':'Marked unpaid'); render();
+}
+async function setReviews(id, delta){
+  const inv=state.invoices.find(x=>x.id===id); if(!inv)return;
+  let n=(inv.reviewCount||0)+delta; if(n<0)n=0;
+  inv.reviewCount=n;
+  if(ONLINE){ const {error}=await sb.from('invoices').update({review_count:n}).eq('id',id); if(error){toast('Save failed: '+error.message);return;} }
+  await recomputeMilestone(inv.contractorId, (inv.start||'').slice(0,7));
+  toast(delta>0?`Review added (+$${CONFIG.REVIEW_RATE}) ✓`:'Review removed'); render();
+}
+async function recomputeMilestone(cid, monthKey){
+  if(!monthKey) return;
+  const group=(state.invoices||[]).filter(iv=>iv.contractorId===cid && (iv.start||'').slice(0,7)===monthKey);
+  const total=group.reduce((s,iv)=>s+Number(iv.reviewCount||0),0);
+  let holder=null; group.forEach(iv=>{ if(!holder||(iv.start||'')>(holder.start||'')) holder=iv; });
+  const reached = total>=Number(CONFIG.REVIEW_MILESTONE_COUNT||5);
+  for(const iv of group){
+    const want=(reached && iv===holder)?Number(CONFIG.REVIEW_MILESTONE||50):0;
+    if(Number(iv.milestone||0)!==want){
+      iv.milestone=want;
+      if(ONLINE) sbDo(sb.from('invoices').update({milestone:want}).eq('id',iv.id));
+    }
+  }
+}
+function reviewStats(){
+  const yr=String(new Date().getFullYear());
+  const mo=isoDate(new Date()).slice(0,7);
+  let monthC=0,yearC=0,life=0,lifeEarned=0;
+  (state.invoices||[]).filter(iv=>iv.contractorId===state.me.id).forEach(iv=>{
+    const c=Number(iv.reviewCount||0), mkey=(iv.start||'').slice(0,7);
+    if(mkey===mo) monthC+=c;
+    if((iv.start||'').slice(0,4)===yr) yearC+=c;
+    life+=c;
+    lifeEarned+=c*Number(CONFIG.REVIEW_RATE||0)+Number(iv.milestone||0);
+  });
+  return {monthC,yearC,life,lifeEarned,need:Number(CONFIG.REVIEW_MILESTONE_COUNT||5)};
 }
 async function setBonus(id){
   const inv=state.invoices.find(x=>x.id===id); if(!inv)return;
