@@ -630,11 +630,42 @@ async function signUp(){
     options:{ data:{ full_name:(first+' '+last).trim(), birthday:bday } } });
   if(error){ toast('Sign-up failed: '+error.message); return; }
   if(data && data.session){          // email confirmation off → straight in
-    const ok=await sbLoadAll(); if(ok){ ctab='home'; render(); }
+    const ok=await sbLoadAll(); if(ok){ ctab='home'; render(); startTutorial(); }
   } else {                           // email confirmation on → must verify first
     toast('Account created! Check your email to confirm, then log in.');
     setAuthMode('login');
   }
+}
+
+/* ---------- first-run tutorial ---------- */
+const TUTORIAL=[
+  {icon:'👋',title:'Welcome to DRC Hub!',body:"Here's a quick 30-second tour of the app. Tap Next to continue."},
+  {icon:'🏠',title:'Home',body:'Your dashboard — check your availability at a glance, see anything needing your attention, and find the review bonus.'},
+  {icon:'⚠️',title:'Set your availability — important!',body:'You will ONLY be scheduled for jobs on the days and times you mark as available. Tap “Availability” on your Home screen and keep it up to date. No availability = no jobs, so please update it regularly!'},
+  {icon:'🧹',title:'Jobs',body:'Extra assignments (short-notice, holidays, or outside your usual zone) show up here at $27/hr — accept or decline each one.'},
+  {icon:'🧾',title:'Invoices',body:'Submit one invoice per week with your hours. Your earnings and this year’s total show here too.'},
+  {icon:'⭐',title:'Review',body:'Show customers the QR code to leave a Google review. You earn $20 for every 5-star review — plus $50 for 5 in a month!'},
+  {icon:'💬',title:'Chat',body:'Message the DRC office directly. Tap a quick question for an instant answer, or “Text a human” for anything urgent.'},
+  {icon:'📖',title:'Guide',body:'The how-to video, FAQs, service expectations, policies, and the incident report form all live here.'},
+  {icon:'🚀',title:"You're all set!",body:'Keep your availability up to date and remember to ask every customer for a review. Welcome aboard!'}
+];
+let tutorialStep=0;
+function startTutorial(){ tutorialStep=0; showTutorial(); }
+function nextTutorial(){ tutorialStep++; showTutorial(); }
+function showTutorial(){
+  const s=TUTORIAL[tutorialStep], last=tutorialStep===TUTORIAL.length-1;
+  sheet(`
+    <div style="text-align:center;padding:8px 4px 4px">
+      <div style="font-size:42px;line-height:1">${s.icon}</div>
+      <h3 style="margin:10px 0 6px">${s.title}</h3>
+      <p class="muted" style="margin:0;font-size:14px">${s.body}</p>
+      <div style="display:flex;justify-content:center;gap:6px;margin:18px 0">
+        ${TUTORIAL.map((_,i)=>`<span style="width:8px;height:8px;border-radius:50%;background:${i===tutorialStep?'var(--teal)':'#cbd5e1'}"></span>`).join('')}
+      </div>
+      <button class="btn primary" onclick="${last?'closeSheet()':'nextTutorial()'}">${last?'Get started':'Next'}</button>
+      ${last?'':`<div style="margin-top:10px"><a href="#" onclick="closeSheet();return false" style="color:var(--muted);font-size:13px">Skip tour</a></div>`}
+    </div>
+  `);
 }
 
 /* ---------- nav ---------- */
@@ -918,14 +949,22 @@ function viewChat(){
     </div>
   </div>`;
 }
+function fmtTime(t){
+  if(!t) return '';
+  const d=new Date(t), now=new Date();
+  const time=d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
+  return d.toDateString()===now.toDateString()? time : d.toLocaleDateString('en-US',{month:'short',day:'numeric'})+' · '+time;
+}
+function msgTime(t){ return `<span style="display:block;font-size:10px;opacity:.6;margin-top:3px;text-align:right">${fmtTime(t)}</span>`; }
 function renderMsg(m){
   const unread = m.from!=='me' && m.t>chatReadAt;
   const dot = unread?'<span class="bluedot" style="position:absolute;right:-15px;top:50%;transform:translateY(-50%)"></span>':'';
-  if(m.kind==='motivation') return `<div class="msgmeta">☀️ Daily motivation</div><div class="msg bot hasdot" style="background:#eaf2fb;border-color:#b6d4f0;color:#045ea9;font-weight:500">${m.text}${dot}</div>`;
-  if(m.kind==='birthday') return `<div class="msgmeta">🎉 From DRC</div><div class="msg bot hasdot" style="background:#fef3c7;border-color:#fde68a;color:#92400e">${m.text}${dot}</div>`;
+  const ts = msgTime(m.t);
+  if(m.kind==='motivation') return `<div class="msgmeta">☀️ Daily motivation</div><div class="msg bot hasdot" style="background:#eaf2fb;border-color:#b6d4f0;color:#045ea9;font-weight:500">${m.text}${ts}${dot}</div>`;
+  if(m.kind==='birthday') return `<div class="msgmeta">🎉 From DRC</div><div class="msg bot hasdot" style="background:#fef3c7;border-color:#fde68a;color:#92400e">${m.text}${ts}${dot}</div>`;
   const cls=m.from==='me'?'me':(m.from==='admin'?'admin':'bot');
   const who=m.from==='admin'?'<div class="msgmeta">DRC office</div>':'';
-  return `${who}<div class="msg ${cls} hasdot">${m.text}${dot}</div>`;
+  return `${who}<div class="msg ${cls} hasdot">${m.text}${ts}${dot}</div>`;
 }
 function scrollChat(){ const l=document.getElementById('chatlog'); if(l)l.scrollTop=l.scrollHeight; }
 function sendChat(){
@@ -978,6 +1017,7 @@ function viewMore(){
   <h2 class="section">Jobber guide</h2>
   ${vid}
   <p class="muted">A short walkthrough of how DRC jobs work, from accepting to invoicing.</p>
+  <button class="btn ghost" onclick="startTutorial()">${svg('<circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>')} Take the app tour again</button>
 
   <h2 class="section">Quality & service expectations</h2>
   <div class="card">
@@ -1054,7 +1094,8 @@ function openAvail(){
   }
   const days=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
   const allZones=['Westboro','Hintonburg','Kanata','Orleans','Vanier','Beacon Hill','Barrhaven',
-    'Riverside South','Centretown','The Glebe','Old Ottawa South','Nepean','Bells Corners','Stittsville','Downtown'];
+    'Riverside South','Centretown','The Glebe','Old Ottawa South','Nepean','Bells Corners','Stittsville','Downtown',
+    'Richmond','Rockland','Cumberland','Carleton Place','Kemptville'];
   const anywhere=me.zones.includes('Anywhere in Ottawa');
   const wks=weekStarts();
   if(availWeek>3||availWeek<0) availWeek=0;
@@ -1089,6 +1130,7 @@ function openAvail(){
   sheet(`
     <button class="closex" onclick="closeSheet()">×</button>
     <h3>Availability & service zone</h3>
+    <div class="notice" style="background:var(--amber-bg);border-color:#fde68a;color:#92400e">⚠️ <strong>Important:</strong> you'll only be scheduled for jobs on the days &amp; times you set here — no availability means no jobs. Please keep it up to date!</div>
     ${daysBlock}
     <label style="margin-top:18px">Service zones (tap to toggle)</label>
     <div class="zonechips" id="zonePick" style="margin-top:8px">
@@ -1740,7 +1782,7 @@ function adminChatView(){
     <div class="chatlog" id="chatlog">${ch.log.map(m=>{
       const cls=m.from==='admin'?'me':(m.from==='bot'?'bot':'admin');
       const who=m.from==='bot'?'<div class="msgmeta">AI assistant</div>':(m.from==='me'?`<div class="msgmeta">${ch.contractor}</div>`:'');
-      return `${who}<div class="msg ${cls}">${m.text}</div>`;}).join('')}</div>
+      return `${who}<div class="msg ${cls}">${m.text}${msgTime(m.t)}</div>`;}).join('')}</div>
     <div class="chatinput">
       <input id="adminField" placeholder="Reply to ${ch.contractor.split(' ')[0]}…" onkeydown="if(event.key==='Enter')adminSend()">
       <button class="iconbtn" onclick="adminSend()">${svg(ICON.send)}</button>
