@@ -1813,10 +1813,10 @@ function openOfferJob(){
     <label>Job / client</label><input id="ojClient" placeholder="e.g. Hampton Inn — lobby">
     <label>Date & time</label><input id="ojDate" placeholder="e.g. Sat Jun 27, 8:00 AM">
     <label>Address</label><input id="ojAddr" placeholder="Street, neighbourhood">
-    <label>Pay</label><input id="ojPay" value="$27/hr">
+    <label>Pay — set the rate (raise it for urgent fills)</label><input id="ojPay" value="$27/hr" placeholder="e.g. $35/hr or $200 flat">
     <label>Why is it an extra assignment?</label>
     <div id="ojReasons" style="margin-top:8px">
-      ${['Short notice','Holiday','Outside service zone'].map(r=>`
+      ${['Short notice','Holiday','Outside service zone','Outside given availability'].map(r=>`
         <div class="checkrow" onclick="this.classList.toggle('sel')"><span class="cb">✓</span>${r}</div>`).join('')}
     </div>
     <div class="divider"></div>
