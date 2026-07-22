@@ -1264,8 +1264,13 @@ function renderAdmin(){
   if(activeAdminChat){ c.innerHTML=adminChatView(); scrollChat(); return; }
   const unpaid=state.invoices.filter(i=>!i.paid).length;
   const newNotifs = (state.notifications||[]).filter(n=>!n.read).length;
+  const unreadChats = state.adminChats.filter(c=>c.unread).length;
+  const openOffers = state.premiumOffers.filter(o=>o.status==='pending').length;
   const nav=`<div class="btnrow" style="margin-bottom:14px;flex-wrap:wrap">
     <button class="btn ${adminTab==='dashboard'?'primary':'ghost'}" style="padding:10px 6px;font-size:13px" onclick="setAdminTab('dashboard')">Dashboard</button>
+    <button class="btn ${adminTab==='messages'?'primary':'ghost'}" style="padding:10px 6px;font-size:13px" onclick="setAdminTab('messages')">Messages${unreadChats?` · ${unreadChats}`:''}</button>
+    <button class="btn ${adminTab==='assignments'?'primary':'ghost'}" style="padding:10px 6px;font-size:13px" onclick="setAdminTab('assignments')">Assignments${openOffers?` · ${openOffers}`:''}</button>
+    <button class="btn ${adminTab==='leaderboard'?'primary':'ghost'}" style="padding:10px 6px;font-size:13px" onclick="setAdminTab('leaderboard')">Leaderboard</button>
     <button class="btn ${adminTab==='invoices'?'primary':'ghost'}" style="padding:10px 6px;font-size:13px" onclick="setAdminTab('invoices')">Invoices${unpaid?` · ${unpaid}`:''}</button>
     <button class="btn ${adminTab==='team'?'primary':'ghost'}" style="padding:10px 6px;font-size:13px" onclick="setAdminTab('team')">Team</button>
     <button class="btn ${adminTab==='notifications'?'primary':'ghost'}" style="padding:10px 6px;font-size:13px" onclick="setAdminTab('notifications')">Alerts${newNotifs?` · ${newNotifs}`:''}</button>
@@ -1273,6 +1278,9 @@ function renderAdmin(){
   const body = adminTab==='invoices'      ? adminInvoicesView()
              : adminTab==='team'          ? (profileId ? adminProfileView(profileId) : adminTeamView())
              : adminTab==='notifications' ? adminNotificationsView()
+             : adminTab==='messages'      ? adminMessagesView()
+             : adminTab==='assignments'   ? adminAssignmentsView()
+             : adminTab==='leaderboard'   ? adminLeaderboardView()
              : adminDashboard();
   c.innerHTML = nav + body;
 }
@@ -1286,6 +1294,16 @@ function adminDashboard(){
     <div class="stat"><div class="n">${state.invoices.filter(i=>!i.paid).length}</div><div class="l">Invoices to pay</div></div>
   </div>
 
+  <h2 class="section">Scheduling board — availability & zones</h2>
+  <p class="muted" style="margin-top:-4px">Everyone's availability for the selected week.</p>
+  <div class="zonechips" style="margin-bottom:10px">${weekStarts().map((ws,i)=>`
+    <span class="chip" style="cursor:pointer;padding:7px 11px;${i===adminWeek?'background:var(--teal);color:#fff':''}"
+      onclick="setAdminWeek(${i})">${i===0?'This week · ':(i===1?'Next week · ':'')}${weekLabel(ws)}</span>`).join('')}</div>
+  ${state.contractors.map(adminContractorCard).join('')}
+  `;
+}
+function adminMessagesView(){
+  return `
   <div class="spread"><h2 class="section">Support inbox</h2></div>
   <button class="btn primary" onclick="openMsgPicker()">${svg(ICON.chat)} Message a contractor</button>
   <div style="margin-top:12px">${state.adminChats.length?state.adminChats.map(ch=>`
@@ -1295,25 +1313,32 @@ function adminDashboard(){
           <div class="muted" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:210px">${ch.last}</div></div></div>
       ${ch.unread?`<span class="row" style="gap:7px"><span class="pill red">New</span><span class="bluedot"></span></span>`:`<span class="pill gray">Open</span>`}
     </div>`).join(''):`<div class="card muted">No conversations yet.</div>`}</div>
-
+  `;
+}
+function adminAssignmentsView(){
+  return `
   <div class="spread"><h2 class="section">Extra assignments</h2></div>
   <button class="btn primary" onclick="openOfferJob()">${svg('<path d="M12 5v14M5 12h14"/>')} Offer an extra assignment</button>
   ${state.premiumOffers.length?`<div style="margin-top:12px">${state.premiumOffers.map(o=>{
     const c=state.contractors.find(x=>x.id===o.to);
     return `<div class="card"><div class="spread"><h3 style="font-size:15px">${o.client}</h3>
       <span class="pill ${o.status==='pending'?'amber':(o.status==='accepted'?'green':'gray')}">${o.status}</span></div>
-      <div class="muted">${o.date} · ${o.pay} → offered to ${c?c.name:'?'}</div></div>`;}).join('')}</div>`:''}
-
+      <div class="muted">${o.date} · ${o.pay} → offered to ${c?c.name:'?'}</div>
+      <button class="btn ghost sm" style="width:100%;margin-top:10px;color:var(--red)" onclick="deleteOffer('${o.id}')">Delete assignment</button></div>`;}).join('')}</div>`:`<div class="card muted" style="margin-top:12px">No extra assignments offered yet.</div>`}
+  `;
+}
+function deleteOffer(id){
+  const o=state.premiumOffers.find(x=>x.id===id); if(!o)return;
+  if(!confirm('Delete this extra assignment? It will also disappear for the contractor.')) return;
+  state.premiumOffers=state.premiumOffers.filter(x=>x.id!==id);
+  if(ONLINE) sbDo(sb.from('assignments').delete().eq('id',id));
+  toast('Assignment deleted'); render();
+}
+function adminLeaderboardView(){
+  return `
   <h2 class="section">Review leaderboard — this month</h2>
   <p class="muted" style="margin-top:-4px">5-star reviews logged on invoices this month. Give the top performers a shout-out!</p>
   ${reviewLeaderboard()}
-
-  <h2 class="section">Scheduling board — availability & zones</h2>
-  <p class="muted" style="margin-top:-4px">Everyone's availability for the selected week.</p>
-  <div class="zonechips" style="margin-bottom:10px">${weekStarts().map((ws,i)=>`
-    <span class="chip" style="cursor:pointer;padding:7px 11px;${i===adminWeek?'background:var(--teal);color:#fff':''}"
-      onclick="setAdminWeek(${i})">${i===0?'This week · ':(i===1?'Next week · ':'')}${weekLabel(ws)}</span>`).join('')}</div>
-  ${state.contractors.map(adminContractorCard).join('')}
   `;
 }
 function reviewLeaderboard(){
@@ -1711,14 +1736,41 @@ function adminInvoiceCard(inv){
       ${inv.tipLog.map(t=>`<div style="margin-top:6px;font-size:13px">✓ $${Number(t.amount||0).toFixed(2)} — ${t.client||'client'} <span class="muted" style="font-size:11px">· logged by ${t.by||'?'} · ${fmtDate(t.at)}</span></div>`).join('')}
       <div class="muted" style="font-size:11px;margin-top:6px">Attached from the contractor's profile when they submitted.</div>
     </div>`:''}
-    <button class="btn ${inv.paid?'ghost':'green'} sm" style="width:100%;margin-top:12px" onclick="togglePaid('${inv.id}')">
-      ${inv.paid?'Mark unpaid':'Mark paid'}</button>
+    <div class="btnrow" style="margin-top:12px">
+      <button class="btn ghost sm" style="flex:1" onclick="openEditInvoice('${inv.id}')">Edit</button>
+      <button class="btn ${inv.paid?'ghost':'green'} sm" style="flex:1" onclick="togglePaid('${inv.id}')">
+        ${inv.paid?'Mark unpaid':'Mark paid'}</button>
+    </div>
   </div>`;
 }
 function togglePaid(id){ const inv=state.invoices.find(x=>x.id===id); if(!inv)return;
   inv.paid=!inv.paid; inv.status=inv.paid?'Paid':'Submitted';
   if(ONLINE) sbDo(sb.from('invoices').update({paid:inv.paid}).eq('id',id));
   toast(inv.paid?'Marked paid ✓':'Marked unpaid'); render();
+}
+function openEditInvoice(id){
+  const inv=state.invoices.find(x=>x.id===id); if(!inv)return;
+  const range=inv.start&&inv.end?`${inv.start} → ${inv.end}`:'';
+  sheet(`
+    <button class="closex" onclick="closeSheet()">×</button>
+    <h3>Edit invoice</h3>
+    <div class="muted" style="margin-top:-6px">${inv.contractor||'Contractor'}${range?` · Week ${range}`:''}</div>
+    <label>Regular hours</label><input id="eiHours" type="number" step="0.25" min="0" value="${inv.hours||0}">
+    <label>Premium hours</label><input id="eiPrem" type="number" step="0.25" min="0" value="${inv.premiumHours||0}">
+    <label>Notes</label><textarea id="eiNotes" rows="3" style="width:100%">${inv.notes||''}</textarea>
+    <button class="btn primary" style="margin-top:16px" onclick="saveInvoiceEdit('${id}')">Save changes</button>
+  `);
+}
+async function saveInvoiceEdit(id){
+  const inv=state.invoices.find(x=>x.id===id); if(!inv)return;
+  const hours=parseFloat(val('eiHours'))||0;
+  const prem =parseFloat(val('eiPrem'))||0;
+  const notes=val('eiNotes')||'';
+  if(hours<0||prem<0){ toast('Hours cannot be negative'); return; }
+  inv.hours=hours; inv.premiumHours=prem; inv.notes=notes;
+  if(ONLINE){ const { error } = await sb.from('invoices').update({hours,premium_hours:prem,notes}).eq('id',id);
+    if(error){ toast('Save failed: '+error.message); return; } }
+  closeSheet(); toast('Invoice updated ✓'); render();
 }
 // reviews are logged on the contractor PROFILE (pending) and attach to their next invoice on submit
 async function addReviewToProfile(cid){
