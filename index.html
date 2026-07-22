@@ -1315,10 +1315,10 @@ function adminDashboard(){
   return `
   <h2 class="section">Overview</h2>
   <div class="statgrid">
-    <div class="stat"><div class="n">${state.contractors.filter(c=>c.status==='Active').length}</div><div class="l">Active contractors</div></div>
-    <div class="stat"><div class="n">${state.adminChats.filter(c=>c.unread).length}</div><div class="l">Chats need a human</div></div>
-    <div class="stat"><div class="n">${state.premiumOffers.filter(o=>o.status==='pending').length}</div><div class="l">Open extra assignments</div></div>
-    <div class="stat"><div class="n">${state.invoices.filter(i=>!i.paid).length}</div><div class="l">Invoices to pay</div></div>
+    <div class="stat" style="cursor:pointer" onclick="setAdminTab('team')"><div class="n">${state.contractors.filter(c=>c.status==='Active').length}</div><div class="l">Active contractors ›</div></div>
+    <div class="stat" style="cursor:pointer" onclick="setAdminTab('messages')"><div class="n">${state.adminChats.filter(c=>c.unread).length}</div><div class="l">Chats need a human ›</div></div>
+    <div class="stat" style="cursor:pointer" onclick="setAdminTab('assignments')"><div class="n">${state.premiumOffers.filter(o=>o.status==='pending').length}</div><div class="l">Open extra assignments ›</div></div>
+    <div class="stat" style="cursor:pointer" onclick="setAdminTab('invoices')"><div class="n">${state.invoices.filter(i=>!i.paid).length}</div><div class="l">Invoices to pay ›</div></div>
   </div>
 
   <h2 class="section">Scheduling board — availability & zones</h2>
@@ -1458,7 +1458,8 @@ function adminTeamView(){
   const caution='<path d="M12 9v4M12 17h.01M10.3 3.9L1.8 18a2 2 0 001.7 3h17a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z"/>';
   const row = (m,i)=>{
     const due = (m.role||'contractor')==='contractor' && checkinDue(m);
-    return `<div class="card spread" style="cursor:pointer" onclick="openProfile('${m.id}')">
+    const search=(m.name+' '+((m.zones||[]).join(' '))+' '+(m.role||'contractor')).toLowerCase();
+    return `<div class="card spread teamrow" data-search="${search}" style="cursor:pointer" onclick="openProfile('${m.id}')">
       <div class="row"><div class="avatar ${m.cls||CLS[i%CLS.length]}">${m.initials}</div>
         <div><h3 style="font-size:15px;margin:0">${m.name}</h3>
           <div class="row" style="gap:6px;margin-top:3px">
@@ -1475,7 +1476,9 @@ function adminTeamView(){
   return `
   <h2 class="section">Team</h2>
   <div class="notice">Tap a contractor to open their profile — set pay & rating, view their details, and track check-ins. A red ⚠ means a check-in is due.</div>
-  ${active.length?active.map(row).join(''):`<div class="card muted">No active team members.</div>`}
+  ${active.length>6?`<input id="teamSearch" placeholder="Search by name or zone…" oninput="filterTeam()" style="width:100%;margin-bottom:12px">`:''}
+  <div id="teamList">${active.length?active.map(row).join(''):`<div class="card muted">No active team members.</div>`}</div>
+  <div id="teamNone" class="card muted" style="display:none">No matches.</div>
   ${removed.length?`<h2 class="section">Removed</h2>${removed.map((m,i)=>`
     <div class="card spread">
       <div class="row"><div class="avatar gray">${m.initials}</div>
@@ -1483,6 +1486,18 @@ function adminTeamView(){
       <button class="btn ghost sm" onclick="restoreUser('${m.id}')">Restore</button>
     </div>`).join('')}`:''}
   `;
+}
+function filterTeam(){
+  const box=document.getElementById('teamSearch'); if(!box) return;
+  const q=box.value.trim().toLowerCase();
+  let shown=0;
+  document.querySelectorAll('#teamList .teamrow').forEach(el=>{
+    const hit = !q || (el.dataset.search||'').includes(q);
+    el.style.display = hit ? '' : 'none';
+    if(hit) shown++;
+  });
+  const none=document.getElementById('teamNone');
+  if(none) none.style.display = (q && shown===0) ? '' : 'none';
 }
 function openProfile(id){ profileId=id; render(); }
 function backToTeam(){ profileId=null; render(); }
