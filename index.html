@@ -256,6 +256,13 @@ let sb = ONLINE ? makeClient(keepPref) : null;
 const CLS = ['','b','c','d','e'];
 function initialsOf(name){ return (name||'?').split(/\s+/).map(w=>w[0]).join('').slice(0,2).toUpperCase(); }
 const BOT_GREETING = "Hi 👋 I'm the DRC assistant. Ask me anything — pay, scheduling, extra assignments, or how to submit your weekly invoice. If I can't help, you can reach a real person.";
+/* ---------- text notifications (Supabase → GHL webhook sends the SMS) ---------- */
+function queueSms(cid, body, kind){
+  if(!ONLINE || !cid) return;
+  const c=(state.contractors||[]).find(x=>x.id===cid)||(state.team||[]).find(x=>x.id===cid);
+  if(!c || !c.phone) return;              // no number on file → skip silently
+  sbDo(sb.from('sms_outbox').insert({ phone:c.phone, name:c.name, body, kind }));
+}
 /* ---------- daily motivation (rotates by day, same for everyone) ---------- */
 const MOTIVATIONS = [
   "Every spotless home is a happy customer. Have a great day out there! 💪",
@@ -326,13 +333,13 @@ async function sbLoadAll(){
     id:p.id, name:p.full_name||'Contractor', initials:initialsOf(p.full_name||'Contractor'),
     cls:CLS[i%CLS.length], zones:p.zones||[], status:p.status||'Active', avail:{}, template:{},
     locked:!!p.avail_locked, lockedTemplate:p.avail_template||null, hourly_rate:p.hourly_rate,
-    score:(p.score==null?6:p.score), email:p.email, birthday:p.birthday, checkins:p.checkins||{}, firstJob:p.first_job,
+    score:(p.score==null?6:p.score), email:p.email, phone:p.phone, birthday:p.birthday, checkins:p.checkins||{}, firstJob:p.first_job,
     pendingReviews:p.pending_reviews||[], pendingTips:p.pending_tips||[]
   }));
   state.team = isAdmin ? allProfs.map((p,i)=>({
     id:p.id, name:p.full_name||'(no name)', role:p.role, status:p.status||'Active',
     initials:initialsOf(p.full_name||'?'), cls:CLS[i%CLS.length], rate:p.hourly_rate,
-    score:(p.score==null?6:p.score), email:p.email, birthday:p.birthday, zones:p.zones||[], checkins:p.checkins||{}, firstJob:p.first_job,
+    score:(p.score==null?6:p.score), email:p.email, phone:p.phone, birthday:p.birthday, zones:p.zones||[], checkins:p.checkins||{}, firstJob:p.first_job,
     pendingReviews:p.pending_reviews||[], pendingTips:p.pending_tips||[]
   })) : null;
 
@@ -592,6 +599,8 @@ function renderLogin(){
       </div>
       <label>Birthday</label>
       <input id="suBday" type="date">
+      <label>Mobile number (for job & message texts)</label>
+      <input id="suPhone" type="tel" placeholder="(613) 555-0123" autocomplete="tel">
       <label>Email</label>
       <input id="loginEmail" type="email" placeholder="you@example.com" autocomplete="username">
       <label>Password</label>
@@ -620,14 +629,15 @@ function renderLogin(){
   </div>`;
 }
 async function signUp(){
-  const first=val('suFirst'), last=val('suLast'), bday=val('suBday'), email=val('loginEmail'), pass=val('loginPass');
+  const first=val('suFirst'), last=val('suLast'), bday=val('suBday'), phone=val('suPhone'), email=val('loginEmail'), pass=val('loginPass');
   if(!first||!last){ toast('Please enter your first and last name'); return; }
   if(!bday){ toast('Please add your birthday'); return; }
+  if(!phone){ toast('Please add your mobile number'); return; }
   if(!email||!pass){ toast('Enter an email and password'); return; }
   if(!ONLINE){ toast('Sign-up needs the live database'); return; }
   toast('Creating your account…');
   const { data, error } = await sb.auth.signUp({ email, password:pass,
-    options:{ data:{ full_name:(first+' '+last).trim(), birthday:bday } } });
+    options:{ data:{ full_name:(first+' '+last).trim(), birthday:bday, phone } } });
   if(error){ toast('Sign-up failed: '+error.message); return; }
   if(data && data.session){          // email confirmation off → straight in
     const ok=await sbLoadAll(); if(ok){ ctab='home'; render(); startTutorial(); }
@@ -1471,13 +1481,22 @@ function adminProfileView(id){
     <div class="divider"></div>
     <table style="width:100%;font-size:14px">
       <tr><td class="muted" style="padding:5px 0">Email</td><td style="text-align:right">${m.email||'—'}</td></tr>
+      <tr><td class="muted" style="padding:5px 0">Mobile</td><td style="text-align:right">${m.phone||'—'}</td></tr>
       <tr><td class="muted" style="padding:5px 0">Birthday</td><td style="text-align:right">${m.birthday?fmtDate(m.birthday):'—'}</td></tr>
       <tr><td class="muted" style="padding:5px 0">Service zones</td><td style="text-align:right">${(m.zones&&m.zones.length)?m.zones.join(', '):'—'}</td></tr>
       <tr><td class="muted" style="padding:5px 0">Earnings ${yr}</td><td style="text-align:right;font-weight:700">$${earn.toFixed(2)}</td></tr>
     </table>
   </div>
   ${isContractor?`
-  <h2 class="section">Pay & rating</h2>
+  <h2 class="section">Contact</h2>
+  <div class="card spread">
+    <span class="muted" style="font-size:13px">Mobile (for texts)</span>
+    <div class="row" style="gap:6px">
+      <input id="phone_${m.id}" type="tel" value="${m.phone||''}" placeholder="(613) 555-0123" style="width:150px;margin:0;padding:8px">
+      <button class="btn ghost sm" onclick="setPhone('${m.id}')">Save</button></div>
+  </div>
+  <h2 class="section">Pay & rating</h2>`:''}
+  ${isContractor?`
   <div class="card">
     <div class="spread"><span class="muted" style="font-size:13px">Hourly pay</span>
       <div class="row" style="gap:6px"><span class="muted">$</span>
@@ -1600,6 +1619,14 @@ async function setRate(id){
   if(ONLINE){ const { error } = await sb.from('profiles').update({hourly_rate:v}).eq('id',id);
     if(error){ toast('Save failed: '+error.message); return; } }
   toast('Hourly pay saved ✓'); render();
+}
+async function setPhone(id){
+  const v=val('phone_'+id);
+  const m=(state.team||[]).find(x=>x.id===id)||(state.contractors||[]).find(x=>x.id===id); if(!m)return;
+  m.phone=v;
+  const o=(state.contractors||[]).find(x=>x.id===id); if(o) o.phone=v;
+  if(ONLINE){ const {error}=await sb.from('profiles').update({phone:v}).eq('id',id); if(error){toast('Save failed: '+error.message);return;} }
+  toast('Mobile number saved ✓'); render();
 }
 function rateOf(id){
   const m=(state.team||[]).find(x=>x.id===id); if(m && m.rate!=null) return Number(m.rate);
@@ -1793,8 +1820,9 @@ async function adminSend(){
   const f=document.getElementById('adminField'); const t=f.value.trim(); if(!t)return;
   f.value='';
   if(ONLINE){
-    const { error } = await sb.from('messages').insert({contractor_id:activeAdminChat,sender:'admin',body:t});
+    const { error } = await sb.from('messages').insert({contractor_id:activeAdminChat,sender:'admin',kind:'chat',body:t});
     if(error){ toast('Send failed: '+error.message); return; }
+    queueSms(activeAdminChat, 'You have a new message in the DRC Hub. Open the app to read it. (No-reply)', 'message');
     await sbRefresh(); scrollChat(); toast('Message sent to contractor');
   } else {
     let ch=state.adminChats.find(c=>c.id===activeAdminChat);
@@ -1840,8 +1868,12 @@ function sendOffer(){
   if(!who.length){ toast('Pick at least one contractor'); return; }
   const rs = reasons.length?reasons:['Extra assignment'];
   who.forEach(id=>{
+    const c=(state.contractors||[]).find(x=>x.id===id);
     state.premiumOffers.push({id:'p'+Date.now()+id,to:id,client,date,pay,reasons:rs,addr,status:'pending'});
-    if(ONLINE) sbDo(sb.from('assignments').insert({contractor_id:id,client,job_date:date,address:addr,pay,reasons:rs,status:'pending'}));
+    if(ONLINE){
+      sbDo(sb.from('assignments').insert({contractor_id:id,client,job_date:date,address:addr,pay,reasons:rs,status:'pending'}));
+      queueSms(id, `New DRC assignment: ${client} on ${date} at ${pay}. Open the app to accept or decline. (No-reply)`, 'assignment');
+    }
   });
   closeSheet();
   toast(`Offer sent to ${who.length} contractor${who.length>1?'s':''} ✓`);
