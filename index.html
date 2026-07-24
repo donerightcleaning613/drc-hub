@@ -708,12 +708,12 @@ function renderAdminTabbar(){
   const unreadChats=state.adminChats.filter(c=>c.unread).length;
   const openOffers=state.premiumOffers.filter(o=>o.status==='pending').length;
   const newNotifs=(state.notifications||[]).filter(n=>!n.read).length;
-  const moreActive = (adminTab==='leaderboard'||adminTab==='notifications');
+  const moreActive = (adminTab==='leaderboard'||adminTab==='invoices');
   const tabs=[
     ['dashboard','Home',ICON.home,0],
     ['messages','Messages',ICON.chat,unreadChats],
     ['assignments','Assign',ICON.plus,openOffers],
-    ['invoices','Invoices',ICON.invoice,unpaid],
+    ['notifications','Alerts',ICON.bell,newNotifs],
     ['team','Team',ICON.team,0],
   ];
   let html=tabs.map(([id,lbl,ic,badge])=>
@@ -723,19 +723,19 @@ function renderAdminTabbar(){
      </button>`).join('');
   html+=`<button class="${moreActive?'on':''}" onclick="openAdminMore()">
        ${svg(ICON.more)}<span>More</span>
-       ${newNotifs?`<span class="badge">${newNotifs}</span>`:''}
+       ${unpaid?`<span class="badge">${unpaid}</span>`:''}
      </button>`;
   document.getElementById('tabbar').innerHTML=html;
 }
 function openAdminMore(){
-  const newNotifs=(state.notifications||[]).filter(n=>!n.read).length;
+  const unpaid=state.invoices.filter(i=>!i.paid).length;
   sheet(`
     <button class="closex" onclick="closeSheet()">×</button>
     <h3>More</h3>
-    <button class="btn ghost" style="width:100%;justify-content:flex-start;margin-top:8px" onclick="closeSheet();setAdminTab('leaderboard')">
+    <button class="btn ghost" style="width:100%;justify-content:flex-start;margin-top:8px" onclick="closeSheet();setAdminTab('invoices')">
+      ${svg(ICON.invoice)} &nbsp;Invoices${unpaid?` · ${unpaid} unpaid`:''}</button>
+    <button class="btn ghost" style="width:100%;justify-content:flex-start;margin-top:10px" onclick="closeSheet();setAdminTab('leaderboard')">
       ${svg(ICON.trophy)} &nbsp;Review leaderboard</button>
-    <button class="btn ghost" style="width:100%;justify-content:flex-start;margin-top:10px" onclick="closeSheet();setAdminTab('notifications')">
-      ${svg(ICON.bell)} &nbsp;Alerts${newNotifs?` · ${newNotifs} new`:''}</button>
   `);
 }
 
@@ -1143,9 +1143,14 @@ function openAvail(){
     availSnapshot = clone(me.avail); availSnapshotZones = clone(me.zones);   // capture "before" once
   }
   const days=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
-  const allZones=['Westboro','Hintonburg','Kanata','Orleans','Vanier','Beacon Hill','Barrhaven',
-    'Riverside South','Centretown','The Glebe','Old Ottawa South','Nepean','Bells Corners','Stittsville','Downtown',
+  const allZones=['Westboro','Hintonburg','Kanata/Stittsville','Orleans','Vanier','Beacon Hill','Barrhaven',
+    'Riverside South','Centretown','The Glebe','Old Ottawa South','Nepean','Bells Corners','Downtown',
     'Richmond','Rockland','Cumberland','Carleton Place','Kemptville'];
+  // migrate any older separate Kanata / Stittsville selections to the combined zone
+  if(me.zones.includes('Kanata')||me.zones.includes('Stittsville')){
+    me.zones = me.zones.filter(z=>z!=='Kanata'&&z!=='Stittsville');
+    if(!me.zones.includes('Kanata/Stittsville')) me.zones.push('Kanata/Stittsville');
+  }
   const anywhere=me.zones.includes('Anywhere in Ottawa');
   const wks=weekStarts();
   if(availWeek>3||availWeek<0) availWeek=0;
@@ -1183,11 +1188,12 @@ function openAvail(){
     <div class="notice" style="background:var(--amber-bg);border-color:#fde68a;color:#92400e">⚠️ <strong>Important:</strong> you'll only be scheduled for jobs on the days &amp; times you set here — no availability means no jobs. Please keep it up to date!</div>
     ${daysBlock}
     <label style="margin-top:18px">Service zones (tap to toggle)</label>
+    <div class="muted" style="font-size:12px;margin-top:2px">Pick the areas you <strong>prefer</strong>. You can also tap “Anywhere in Ottawa” if you’re open to the whole city — that won’t clear your preferred areas.</div>
     <div class="zonechips" id="zonePick" style="margin-top:8px">
       <span class="chip" style="cursor:pointer;font-weight:800;${anywhere?'background:var(--teal);color:#fff':'background:#dceaf6;color:#045ea9'}"
         onclick="toggleZone('Anywhere in Ottawa')" id="z_AnywhereinOttawa">📍 Anywhere in Ottawa</span>
       ${allZones.map(z=>`
-      <span class="chip" style="cursor:pointer;${me.zones.includes(z)?'background:var(--teal);color:#fff':''}${anywhere?'opacity:.4;pointer-events:none':''}"
+      <span class="chip" style="cursor:pointer;${me.zones.includes(z)?'background:var(--teal);color:#fff':''}"
         onclick="toggleZone('${z}')" id="z_${z.replace(/\s/g,'')}">${z}</span>`).join('')}</div>
     <button class="btn primary" style="margin-top:20px" onclick="saveAvail()">Save</button>
   `);
@@ -1218,13 +1224,10 @@ function toggleDay(d){ const wk=curWeekAvail();
 function setTime(d,which,v){ const wk=curWeekAvail();
   if(wk[d]) wk[d][which]=v; }
 function toggleZone(z){ const me=state.contractors.find(x=>x.id===state.me.id);
-  if(z==='Anywhere in Ottawa'){
-    me.zones = me.zones.includes(z) ? [] : ['Anywhere in Ottawa'];
-  } else {
-    if(me.zones.includes('Anywhere in Ottawa')) return;
-    const i=me.zones.indexOf(z);
-    if(i>=0)me.zones.splice(i,1); else me.zones.push(z);
-  }
+  // every zone (including "Anywhere in Ottawa") toggles independently, so a contractor
+  // can flag their preferred areas AND note they're open to the whole city.
+  const i=me.zones.indexOf(z);
+  if(i>=0) me.zones.splice(i,1); else me.zones.push(z);
   openAvail();
 }
 function saveAvail(){
@@ -1344,6 +1347,13 @@ function adminMessagesView(){
 }
 function adminAssignmentsView(){
   return `
+  <h2 class="section">Find cleaners by address</h2>
+  <div class="card" style="background:#eaf2fb;border:1px solid #b6d4f0">
+    <div class="muted" style="font-size:12px;margin-bottom:8px">Type a job address or neighbourhood to see who covers that area.</div>
+    <input id="addrFind" placeholder="e.g. 55 Stonehaven Dr, Stittsville" oninput="findByAddress()" style="width:100%">
+    <div id="addrResults" style="margin-top:10px"></div>
+  </div>
+
   <div class="spread"><h2 class="section">Extra assignments</h2></div>
   <button class="btn primary" onclick="openOfferJob()">${svg('<path d="M12 5v14M5 12h14"/>')} Offer an extra assignment</button>
   ${state.premiumOffers.length?`<div style="margin-top:12px">${state.premiumOffers.map(o=>{
@@ -1361,6 +1371,50 @@ function deleteOffer(id){
   if(ONLINE) sbDo(sb.from('assignments').delete().eq('id',id));
   toast('Assignment deleted'); render();
 }
+// map searchable terms in an address to a canonical service zone
+const ZONE_TERMS=[
+  ['kanata','Kanata/Stittsville'],['stittsville','Kanata/Stittsville'],
+  ['westboro','Westboro'],['hintonburg','Hintonburg'],['orleans','Orleans'],['orléans','Orleans'],
+  ['vanier','Vanier'],['beacon hill','Beacon Hill'],['barrhaven','Barrhaven'],
+  ['riverside south','Riverside South'],['centretown','Centretown'],['glebe','The Glebe'],
+  ['old ottawa south','Old Ottawa South'],['nepean','Nepean'],['bells corners','Bells Corners'],
+  ['downtown','Downtown'],['richmond','Richmond'],['rockland','Rockland'],['cumberland','Cumberland'],
+  ['carleton place','Carleton Place'],['kemptville','Kemptville']
+];
+function normZone(z){ z=(z||'').toLowerCase(); if(z==='kanata'||z==='stittsville') return 'kanata/stittsville'; return z; }
+function findByAddress(){
+  const box=document.getElementById('addrFind'); if(!box) return;
+  const out=document.getElementById('addrResults'); if(!out) return;
+  const q=box.value.trim().toLowerCase();
+  if(!q){ out.innerHTML=''; return; }
+  const matched=new Set();
+  ZONE_TERMS.forEach(([term,zone])=>{ if(q.includes(term)) matched.add(zone); });
+  if(!matched.size){
+    out.innerHTML=`<div class="muted" style="font-size:13px">No Ottawa area recognized yet — include a neighbourhood (e.g. Barrhaven, Kanata, Orleans).</div>`;
+    return;
+  }
+  const want=[...matched].map(z=>z.toLowerCase());
+  const list=(state.contractors||[]).filter(c=>{
+    const zs=(c.zones||[]).map(normZone);
+    if(zs.includes('anywhere in ottawa')) return true;
+    return want.some(w=>zs.includes(w));
+  });
+  // sort contractors who PREFER the area first, then those merely open to all
+  const scored=list.map(c=>{ const zs=(c.zones||[]).map(normZone);
+    return {c, prefers: want.some(w=>zs.includes(w))}; })
+    .sort((a,b)=>(b.prefers?1:0)-(a.prefers?1:0));
+  const area=[...matched].join(', ');
+  out.innerHTML=`<div class="muted" style="font-size:12px;margin-bottom:6px">Area: <strong>${area}</strong> — ${list.length} cleaner${list.length!==1?'s':''} available</div>`
+    + (scored.length? scored.map(({c,prefers})=>`
+      <div class="card spread" style="cursor:pointer;margin:6px 0" onclick="gotoProfile('${c.id}')">
+        <div class="row"><div class="avatar ${c.cls}">${c.initials}</div>
+          <div><strong>${c.name}</strong>
+            <div class="muted" style="font-size:11px">${(c.zones||[]).join(', ')||'No zones set'}</div></div></div>
+        ${prefers?`<span class="pill green">Prefers area</span>`:`<span class="pill blue">Open to all</span>`}
+      </div>`).join('')
+      : `<div class="card muted">No cleaners cover this area yet.</div>`);
+}
+function gotoProfile(id){ adminTab='team'; profileId=id; activeAdminChat=null; render(); }
 function adminLeaderboardView(){
   return `
   <h2 class="section">Review leaderboard — this month</h2>
