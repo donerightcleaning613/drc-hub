@@ -1471,7 +1471,7 @@ function paySheetGroups(){
   // combine every UNPAID invoice per contractor (weekly invoices → one biweekly payout)
   const byC={};
   (state.invoices||[]).filter(inv=>!inv.paid).forEach(inv=>{ (byC[inv.contractorId]=byC[inv.contractorId]||[]).push(inv); });
-  return Object.keys(byC).map(id=>{
+  const groups = Object.keys(byC).map(id=>{
     const invs=byC[id]; const rate=rateOf(id);
     let hours=0,prem=0,tip=0,reviews=0,total=0,weeks=0,start=null,end=null,missing=false;
     invs.forEach(inv=>{ hours+=Number(inv.hours||0); prem+=Number(inv.premiumHours||0); tip+=Number(inv.bonus||0); weeks++;
@@ -1481,11 +1481,20 @@ function paySheetGroups(){
     const mAmt=milestoneAmount(invs); total+=mAmt;
     return {id, name:invs[0].contractor||'', rate, hours, prem, tip, reviewBonus:reviews+mAmt, total, weeks, start, end, missing};
   });
+  // include every active contractor with NO unpaid invoice at $0, for the accountant's reference
+  const have=new Set(groups.map(g=>g.id));
+  (state.contractors||[]).filter(c=>(c.status||'Active')!=='Removed').forEach(c=>{
+    if(have.has(c.id)) return;
+    groups.push({id:c.id, name:c.name||'', rate:rateOf(c.id), hours:0, prem:0, tip:0, reviewBonus:0, total:0, weeks:0, start:null, end:null, missing:false, none:true});
+  });
+  // owed contractors first (by name), then the $0 "no invoice" rows
+  groups.sort((a,b)=> (a.none?1:0)-(b.none?1:0) || String(a.name).localeCompare(String(b.name)));
+  return groups;
 }
 function paySheetRows(){
   const rows=[['Contractor','Period','Weeks','Regular hrs','Premium hrs','Rate','Tips','Review bonuses','Total due']];
   paySheetGroups().forEach(g=>{
-    rows.push([g.name, (g.start||'')+' → '+(g.end||''), g.weeks, g.hours, g.prem,
+    rows.push([g.name, g.none?'No invoice submitted':((g.start||'')+' → '+(g.end||'')), g.weeks, g.hours, g.prem,
       g.rate!=null?g.rate.toFixed(2):'', (g.tip||0).toFixed(2), (g.reviewBonus||0).toFixed(2), g.missing?'rate not set':g.total.toFixed(2)]);
   });
   return rows;
@@ -1506,6 +1515,7 @@ function emailPaySheet(){
   if(!groups.length) body+='(No unpaid invoices.)\n';
   let grand=0;
   groups.forEach(g=>{ if(!g.missing) grand+=g.total;
+    if(g.none){ body+=`${g.name}: no invoice submitted = $0.00\n`; return; }
     body+=`${g.name}: ${g.hours}h regular`+(g.prem?` + ${g.prem}h premium`:'')+(g.reviewBonus?` + $${g.reviewBonus.toFixed(2)} review bonuses`:'')+(g.tip?` + $${g.tip.toFixed(2)} tips`:'')+` over ${g.weeks} week${g.weeks>1?'s':''}`
        +(g.missing?' (rate not set)':` = $${g.total.toFixed(2)}`)+'\n'; });
   if(groups.length) body+=`\nTotal to pay out: $${grand.toFixed(2)}\n`;
