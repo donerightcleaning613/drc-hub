@@ -229,6 +229,7 @@ const CONFIG = {
   REVIEW_RATE: 20,                      // $ bonus per 5-star Google review
   REVIEW_MILESTONE: 50,                 // $ bonus for hitting the monthly review milestone
   REVIEW_MILESTONE_COUNT: 5,            // reviews in a month needed for the milestone
+  LUNCH_RATE: 25,                       // $ value of one "Paid Lunch" bonus (weekly random draw)
   GUIDE_VIDEO_FILE: "jobber-guide.mp4", // a video file kept next to this HTML (plays in-app)
   GUIDE_VIDEO_URL: "",                  // OR paste a YouTube/Vimeo link instead
 
@@ -334,13 +335,13 @@ async function sbLoadAll(){
     cls:CLS[i%CLS.length], zones:p.zones||[], status:p.status||'Active', avail:{}, template:{},
     locked:!!p.avail_locked, lockedTemplate:p.avail_template||null, hourly_rate:p.hourly_rate,
     score:(p.score==null?6:p.score), email:p.email, phone:p.phone, birthday:p.birthday, checkins:p.checkins||{}, firstJob:p.first_job,
-    pendingReviews:p.pending_reviews||[], pendingTips:p.pending_tips||[], strikes:p.strikes||[]
+    pendingReviews:p.pending_reviews||[], pendingTips:p.pending_tips||[], pendingLunches:p.pending_lunches||[], strikes:p.strikes||[]
   }));
   state.team = isAdmin ? allProfs.map((p,i)=>({
     id:p.id, name:p.full_name||'(no name)', role:p.role, status:p.status||'Active',
     initials:initialsOf(p.full_name||'?'), cls:CLS[i%CLS.length], rate:p.hourly_rate,
     score:(p.score==null?6:p.score), email:p.email, phone:p.phone, birthday:p.birthday, zones:p.zones||[], checkins:p.checkins||{}, firstJob:p.first_job,
-    pendingReviews:p.pending_reviews||[], pendingTips:p.pending_tips||[], strikes:p.strikes||[]
+    pendingReviews:p.pending_reviews||[], pendingTips:p.pending_tips||[], pendingLunches:p.pending_lunches||[], strikes:p.strikes||[]
   })) : null;
 
   // contractor-only auto messages (run before we fetch messages so they appear immediately)
@@ -358,7 +359,7 @@ async function sbLoadAll(){
   state.invoices = inv.map(i=>({id:i.id,contractorId:i.contractor_id,contractor:i.contractor_name,
     start:i.week_start,end:i.week_end,hours:Number(i.hours)||0,premiumHours:Number(i.premium_hours)||0,
     notes:i.notes||'',paid:!!i.paid,status:i.paid?'Paid':'Submitted',
-    bonus:Number(i.bonus)||0,bonusNote:i.bonus_note||'',tipLog:i.tip_log||[],
+    bonus:Number(i.bonus)||0,bonusNote:i.bonus_note||'',tipLog:i.tip_log||[],lunchLog:i.lunch_log||[],
     reviewLog:i.review_log||[],reviewCount:(i.review_log||[]).length,milestone:Number(i.milestone)||0}));
 
   const inc = (await sb.from('incidents').select('*').order('created_at',{ascending:false})).data || [];
@@ -954,22 +955,25 @@ function submitInvoice(){
   const me=state.contractors.find(x=>x.id===state.me.id);
   const pending=(me&&me.pendingReviews||[]).slice();   // reviews logged on their profile → attach now
   const pendingTips=(me&&me.pendingTips||[]).slice();  // tips logged on their profile → attach now
+  const pendingLunches=(me&&me.pendingLunches||[]).slice(); // paid lunches logged on their profile → attach now
   const tipSum=pendingTips.reduce((s,t)=>s+Number(t.amount||0),0);
+  const lunchSum=pendingLunches.length*Number(CONFIG.LUNCH_RATE||0);
   const inv={id:'i'+Date.now(),contractorId:state.me.id,contractor:me?me.name:'',
     start,end,hours,premiumHours,notes,submittedAt:new Date().toISOString(),paid:false,status:'Submitted',
-    reviewLog:pending, reviewCount:pending.length, tipLog:pendingTips, bonus:tipSum};
+    reviewLog:pending, reviewCount:pending.length, tipLog:pendingTips, lunchLog:pendingLunches, bonus:tipSum};
   state.invoices.push(inv);
-  if(me){ me.pendingReviews=[]; me.pendingTips=[]; }   // clear pending now that they're on the invoice
+  if(me){ me.pendingReviews=[]; me.pendingTips=[]; me.pendingLunches=[]; }   // clear pending now that they're on the invoice
   if(ONLINE){
     sbDo(sb.from('invoices').insert({contractor_id:state.me.id,contractor_name:me?me.name:'',
       week_start:start,week_end:end,hours,premium_hours:premiumHours,notes,paid:false,
-      review_log:pending, review_count:pending.length, tip_log:pendingTips, bonus:tipSum}));
-    sbDo(sb.from('profiles').update({pending_reviews:[], pending_tips:[]}).eq('id',state.me.id));
+      review_log:pending, review_count:pending.length, tip_log:pendingTips, lunch_log:pendingLunches, bonus:tipSum}));
+    sbDo(sb.from('profiles').update({pending_reviews:[], pending_tips:[], pending_lunches:[]}).eq('id',state.me.id));
     sbDo(sb.from('notifications').insert({contractor_id:state.me.id,contractor_name:me?me.name:'',
       type:'invoice', summary:`${me?me.name:'A contractor'} submitted a weekly invoice`,
       details:[`Week ${start} → ${end}`, `${hours} regular hrs`+(premiumHours?` · ${premiumHours} premium hrs`:''),
         pending.length?`${pending.length} 5-star review${pending.length>1?'s':''} attached`:'',
-        tipSum?`$${tipSum.toFixed(2)} in tips attached`:'', notes?('Notes: '+notes):'No notes'].filter(Boolean)}));
+        tipSum?`$${tipSum.toFixed(2)} in tips attached`:'',
+        lunchSum?`$${lunchSum.toFixed(2)} paid lunch attached`:'', notes?('Notes: '+notes):'No notes'].filter(Boolean)}));
   }
   emailInvoice(inv);
   toast('Invoice saved — opening your email to send ✓'); render();
@@ -1475,7 +1479,7 @@ function paySheetGroups(){
     const invs=byC[id]; const rate=rateOf(id);
     let hours=0,prem=0,tip=0,reviews=0,total=0,weeks=0,start=null,end=null,missing=false;
     invs.forEach(inv=>{ hours+=Number(inv.hours||0); prem+=Number(inv.premiumHours||0); tip+=Number(inv.bonus||0); weeks++;
-      const t=invoiceTotal(inv); if(t){ total+=t.total; reviews+=t.reviewsAmt; } else missing=true;
+      const t=invoiceTotal(inv); if(t){ total+=t.total; reviews+=t.reviewsAmt+t.lunchAmt; } else missing=true;
       if(inv.start&&(!start||inv.start<start)) start=inv.start;
       if(inv.end&&(!end||inv.end>end)) end=inv.end; });
     const mAmt=milestoneAmount(invs); total+=mAmt;
@@ -1492,7 +1496,7 @@ function paySheetGroups(){
   return groups;
 }
 function paySheetRows(){
-  const rows=[['Contractor','Period','Weeks','Regular hrs','Premium hrs','Rate','Tips','Review bonuses','Total due']];
+  const rows=[['Contractor','Period','Weeks','Regular hrs','Premium hrs','Rate','Tips','Bonuses (reviews + paid lunch)','Total due']];
   paySheetGroups().forEach(g=>{
     rows.push([g.name, g.none?'No invoice submitted':((g.start||'')+' → '+(g.end||'')), g.weeks, g.hours, g.prem,
       g.rate!=null?g.rate.toFixed(2):'', (g.tip||0).toFixed(2), (g.reviewBonus||0).toFixed(2), g.missing?'rate not set':g.total.toFixed(2)]);
@@ -1516,7 +1520,7 @@ function emailPaySheet(){
   let grand=0;
   groups.forEach(g=>{ if(!g.missing) grand+=g.total;
     if(g.none){ body+=`${g.name}: no invoice submitted = $0.00\n`; return; }
-    body+=`${g.name}: ${g.hours}h regular`+(g.prem?` + ${g.prem}h premium`:'')+(g.reviewBonus?` + $${g.reviewBonus.toFixed(2)} review bonuses`:'')+(g.tip?` + $${g.tip.toFixed(2)} tips`:'')+` over ${g.weeks} week${g.weeks>1?'s':''}`
+    body+=`${g.name}: ${g.hours}h regular`+(g.prem?` + ${g.prem}h premium`:'')+(g.reviewBonus?` + $${g.reviewBonus.toFixed(2)} bonuses (reviews + paid lunch)`:'')+(g.tip?` + $${g.tip.toFixed(2)} tips`:'')+` over ${g.weeks} week${g.weeks>1?'s':''}`
        +(g.missing?' (rate not set)':` = $${g.total.toFixed(2)}`)+'\n'; });
   if(groups.length) body+=`\nTotal to pay out: $${grand.toFixed(2)}\n`;
   window.location.href=`mailto:${CONFIG.OFFICE_EMAIL}?subject=${encodeURIComponent('DRC pay sheet — amounts owing')}&body=${encodeURIComponent(body)}`;
@@ -1693,6 +1697,23 @@ function adminProfileView(id){
       <button class="btn ghost sm" onclick="addTipToProfile('${m.id}')">+ Add</button>
     </div>
   </div>
+  <h2 class="section">Paid Lunch (+$${CONFIG.LUNCH_RATE})</h2>
+  <div class="notice">Weekly random draw — we cover ${m.name.split(' ')[0]}'s lunch. Each Paid Lunch is <strong>$${CONFIG.LUNCH_RATE}</strong> and auto-attaches to their <strong>next submitted invoice</strong>. Pick the date so you can avoid choosing the same person too often.</div>
+  <div class="card">
+    <div class="spread"><span class="muted" style="font-size:12px">Last paid lunch</span><strong style="font-size:13px">${(()=>{const d=lastLunchDate(m.id);return d?fmtDate(d):'Never';})()}</strong></div>
+    <div class="divider"></div>
+    <div style="font-size:13px;font-weight:600;color:#7c3aed">Pending — will attach to next invoice (${(m.pendingLunches||[]).length})</div>
+    ${(m.pendingLunches||[]).length?(m.pendingLunches||[]).map((l,idx)=>`
+      <div class="spread" style="margin-top:7px;font-size:13px">
+        <span>🍽️ Paid lunch — ${l.date?fmtDate(l.date):'no date'} <span class="muted" style="font-size:11px">· $${Number(CONFIG.LUNCH_RATE).toFixed(2)} · ${l.by||'?'}</span></span>
+        <span onclick="removeLunchFromProfile('${m.id}',${idx})" title="Remove" style="cursor:pointer;color:var(--red);font-weight:700">✕</span>
+      </div>`).join(''):`<div class="muted" style="font-size:12px;margin-top:5px">No pending paid lunch.</div>`}
+    <div class="row" style="gap:6px;margin-top:10px;align-items:center">
+      <span class="muted" style="font-size:13px">Date</span>
+      <input id="lunchdate_${m.id}" type="date" value="${isoDate(new Date())}" style="flex:1;margin:0;padding:8px">
+      <button class="btn ghost sm" onclick="addLunchToProfile('${m.id}')">+ Paid Lunch</button>
+    </div>
+  </div>
   <h2 class="section">Check-in cadence</h2>
   <div class="card">
     <div class="spread"><span class="muted" style="font-size:13px">First job date</span>
@@ -1841,8 +1862,11 @@ function invoiceTotal(inv){
   const tip=Number(inv.bonus||0);
   const reviewCount=Number(inv.reviewCount||0);
   const reviewsAmt=reviewCount*Number(CONFIG.REVIEW_RATE||0);
-  return { rate, reg, prem, tip, reviewCount, reviewsAmt, bonus:tip+reviewsAmt,
-           total:reg+prem+tip+reviewsAmt };
+  const lunchCount=(inv.lunchLog||[]).length;
+  const lunchAmt=lunchCount*Number(CONFIG.LUNCH_RATE||0);
+  return { rate, reg, prem, tip, reviewCount, reviewsAmt, lunchCount, lunchAmt,
+           bonus:tip+reviewsAmt+lunchAmt,
+           total:reg+prem+tip+reviewsAmt+lunchAmt };
 }
 // $50 per calendar month in which a contractor reaches 5 reviews (derived, not stored)
 function milestoneAmount(invs){
@@ -1909,6 +1933,11 @@ function adminInvoiceCard(inv){
     ${(inv.tipLog||[]).length?`<div style="margin-top:10px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:10px 11px">
       <div style="font-size:12px;font-weight:600;color:#92400e">💵 Tips on this invoice · $${(inv.tipLog||[]).reduce((s,t)=>s+Number(t.amount||0),0).toFixed(2)}</div>
       ${inv.tipLog.map(t=>`<div style="margin-top:6px;font-size:13px">✓ $${Number(t.amount||0).toFixed(2)} — ${t.client||'client'} <span class="muted" style="font-size:11px">· logged by ${t.by||'?'} · ${fmtDate(t.at)}</span></div>`).join('')}
+      <div class="muted" style="font-size:11px;margin-top:6px">Attached from the contractor's profile when they submitted.</div>
+    </div>`:''}
+    ${(inv.lunchLog||[]).length?`<div style="margin-top:10px;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:10px;padding:10px 11px">
+      <div style="font-size:12px;font-weight:600;color:#7c3aed">🍽️ Paid Lunch on this invoice · $${((inv.lunchLog||[]).length*Number(CONFIG.LUNCH_RATE)).toFixed(2)}</div>
+      ${inv.lunchLog.map(l=>`<div style="margin-top:6px;font-size:13px">✓ $${Number(CONFIG.LUNCH_RATE).toFixed(2)} — ${l.date?fmtDate(l.date):'no date'} <span class="muted" style="font-size:11px">· logged by ${l.by||'?'}</span></div>`).join('')}
       <div class="muted" style="font-size:11px;margin-top:6px">Attached from the contractor's profile when they submitted.</div>
     </div>`:''}
     <div class="btnrow" style="margin-top:12px">
@@ -1990,6 +2019,34 @@ async function removeTipFromProfile(cid, idx){
   const o=(state.contractors||[]).find(x=>x.id===cid); if(o) o.pendingTips=m.pendingTips;
   if(ONLINE){ const {error}=await sb.from('profiles').update({pending_tips:m.pendingTips}).eq('id',cid); if(error){toast('Save failed: '+error.message);return;} }
   toast('Pending tip removed'); render();
+}
+// most recent paid lunch across their invoices + pending (helps avoid repeats)
+function lastLunchDate(cid){
+  let latest=null;
+  (state.invoices||[]).filter(iv=>iv.contractorId===cid).forEach(iv=>{
+    (iv.lunchLog||[]).forEach(l=>{ const d=l.date||l.at; if(d&&(!latest||d>latest)) latest=d; }); });
+  const m=(state.team||[]).find(x=>x.id===cid)||(state.contractors||[]).find(x=>x.id===cid);
+  (m&&m.pendingLunches||[]).forEach(l=>{ const d=l.date||l.at; if(d&&(!latest||d>latest)) latest=d; });
+  return latest;
+}
+async function addLunchToProfile(cid){
+  const m=(state.team||[]).find(x=>x.id===cid)||(state.contractors||[]).find(x=>x.id===cid); if(!m)return;
+  const date=val('lunchdate_'+cid);
+  if(!date){ toast('Pick the paid-lunch date'); return; }
+  const entry={by:(session&&session.name)||'Admin', byId:(session&&session.id)||null, at:isoDate(new Date()), date, amount:Number(CONFIG.LUNCH_RATE||0)};
+  const arr=(m.pendingLunches||[]).concat([entry]);
+  const t=(state.team||[]).find(x=>x.id===cid); if(t) t.pendingLunches=arr;
+  const o=(state.contractors||[]).find(x=>x.id===cid); if(o) o.pendingLunches=arr;
+  if(ONLINE){ const {error}=await sb.from('profiles').update({pending_lunches:arr}).eq('id',cid); if(error){toast('Save failed: '+error.message);return;} }
+  toast(`Paid Lunch logged ($${Number(CONFIG.LUNCH_RATE).toFixed(2)}) — attaches to their next invoice ✓`); render();
+}
+async function removeLunchFromProfile(cid, idx){
+  const m=(state.team||[]).find(x=>x.id===cid)||(state.contractors||[]).find(x=>x.id===cid); if(!m)return;
+  const arr=(m.pendingLunches||[]).slice(); arr.splice(idx,1);
+  const t=(state.team||[]).find(x=>x.id===cid); if(t) t.pendingLunches=arr;
+  const o=(state.contractors||[]).find(x=>x.id===cid); if(o) o.pendingLunches=arr;
+  if(ONLINE){ const {error}=await sb.from('profiles').update({pending_lunches:arr}).eq('id',cid); if(error){toast('Save failed: '+error.message);return;} }
+  toast('Pending paid lunch removed'); render();
 }
 function reviewStats(){
   const yr=String(new Date().getFullYear());
