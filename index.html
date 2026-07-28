@@ -1438,15 +1438,41 @@ function reviewLeaderboard(){
   const byC={};
   (state.invoices||[]).forEach(iv=>{ if((iv.start||'').slice(0,7)!==mo) return;
     byC[iv.contractorId]=(byC[iv.contractorId]||0)+Number(iv.reviewCount||0); });
-  const list=(state.contractors||[]).map(c=>({name:c.name,cls:c.cls,initials:c.initials,n:byC[c.id]||0}))
+  const list=(state.contractors||[]).map(c=>({id:c.id,name:c.name,cls:c.cls,initials:c.initials,n:byC[c.id]||0}))
     .filter(x=>x.n>0).sort((a,b)=>b.n-a.n);
   if(!list.length) return `<div class="card muted">No reviews logged yet this month.</div>`;
   const medal=['🥇','🥈','🥉'];
-  return list.map((x,i)=>`<div class="card spread">
+  return `<div class="muted" style="font-size:12px;margin:-2px 0 8px">Tap a name to see all of their past reviews.</div>`
+   + list.map((x,i)=>`<div class="card spread" style="cursor:pointer" onclick="showContractorReviews('${x.id}')">
     <div class="row"><span style="width:24px;text-align:center;font-weight:700;color:#94a3b8">${medal[i]||(i+1)}</span>
       <div class="avatar ${x.cls}">${x.initials}</div><strong>${x.name}</strong></div>
-    <span class="pill green">${x.n} review${x.n>1?'s':''}</span>
+    <span class="row" style="gap:6px"><span class="pill green">${x.n} review${x.n>1?'s':''}</span>${svg('<path d="M9 18l6-6-6-6"/>')}</span>
   </div>`).join('');
+}
+// every review ever logged for a contractor (from submitted invoices + still-pending), newest first
+function contractorReviews(cid){
+  const out=[];
+  (state.invoices||[]).filter(iv=>iv.contractorId===cid).forEach(iv=>{
+    (iv.reviewLog||[]).forEach(r=>out.push({note:r.note, by:r.by, at:r.at,
+      week:(iv.start&&iv.end)?`${iv.start} → ${iv.end}`:'', pending:false})); });
+  const m=(state.contractors||[]).find(x=>x.id===cid)||(state.team||[]).find(x=>x.id===cid);
+  (m&&m.pendingReviews||[]).forEach(r=>out.push({note:r.note, by:r.by, at:r.at, week:'', pending:true}));
+  return out.sort((a,b)=>String(b.at||'').localeCompare(String(a.at||'')));
+}
+function showContractorReviews(cid){
+  const m=(state.contractors||[]).find(x=>x.id===cid)||(state.team||[]).find(x=>x.id===cid); if(!m)return;
+  const list=contractorReviews(cid);
+  const total=list.length*Number(CONFIG.REVIEW_RATE||0);
+  sheet(`
+    <button class="closex" onclick="closeSheet()">×</button>
+    <h3>${m.name} — all reviews (${list.length})</h3>
+    <div class="muted" style="font-size:12px;margin-top:-4px">Every 5-star review ever logged, newest first · $${CONFIG.REVIEW_RATE} each · $${total.toFixed(2)} lifetime.</div>
+    ${list.length?list.map(r=>`<div class="card" style="margin-top:8px">
+      <div style="font-size:13px">⭐ ${r.note?r.note:'Review'} ${r.pending?'<span class="pill amber">pending</span>':''}</div>
+      <div class="muted" style="font-size:11px;margin-top:4px">logged by ${r.by||'?'} · ${fmtDate(r.at)}${r.week?` · invoice ${r.week}`:(r.pending?' · not yet on an invoice':'')}</div>
+    </div>`).join(''):`<div class="card muted">No reviews logged yet.</div>`}
+    <button class="btn ghost" style="width:100%;margin-top:12px" onclick="closeSheet();gotoProfile('${cid}')">Open profile</button>
+  `);
 }
 function setInvFilter(f){ invFilter=f; render(); }
 function adminInvoicesView(){
