@@ -827,14 +827,15 @@ function maybeShowSupplyChecklist(){
   if(supplyPrompted) return;
   try{ if(localStorage.getItem('drcSuppliesAck')==='1') return; }catch(e){}
   supplyPrompted=true;
+  try{ localStorage.setItem('drcSuppliesAck','1'); }catch(e){}   // INITIAL open only — never auto-pops again
   setTimeout(showSupplyChecklist, 400);   // let the home screen paint first
 }
 function showSupplyChecklist(){
   sheet(`
     <button class="closex" onclick="closeSheet()">×</button>
-    <h3>Before you head out ✅</h3>
+    <h3>Before you start working ✅</h3>
     <div class="notice" style="background:var(--amber-bg);border-color:#fde68a;color:#92400e">
-      Every job must be <strong>fully set up in Jobber</strong>, and you must arrive with <strong>all supplies ready to go</strong> — out of their boxes/packaging and restocked before you leave.
+      Your <strong>Jobber account must be fully set up before you start working jobs.</strong> This contractor app will <strong>NOT</strong> show you upcoming jobs or let you clock in and out — that all happens in Jobber. Arrive with every supply below <strong>ready to go</strong> (out of packaging and restocked).
     </div>
     <label style="margin-top:6px">Required supplies — tap each to check it off</label>
     <div id="supplyList" style="margin-top:8px">
