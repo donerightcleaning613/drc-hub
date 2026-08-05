@@ -230,6 +230,7 @@ const CONFIG = {
   REVIEW_MILESTONE: 50,                 // $ bonus for hitting the monthly review milestone
   REVIEW_MILESTONE_COUNT: 5,            // reviews in a month needed for the milestone
   LUNCH_RATE: 25,                       // $ value of one "Paid Lunch" bonus (weekly random draw)
+  PHOTO_BUCKET: "photos",               // Supabase Storage bucket for avatars + job photos
   GUIDE_VIDEO_FILE: "jobber-guide.mp4", // a video file kept next to this HTML (plays in-app)
   GUIDE_VIDEO_URL: "",                  // OR paste a YouTube/Vimeo link instead
 
@@ -335,13 +336,13 @@ async function sbLoadAll(){
     cls:CLS[i%CLS.length], zones:p.zones||[], status:p.status||'Active', avail:{}, template:{},
     locked:!!p.avail_locked, lockedTemplate:p.avail_template||null, hourly_rate:p.hourly_rate,
     score:(p.score==null?6:p.score), email:p.email, phone:p.phone, birthday:p.birthday, checkins:p.checkins||{}, firstJob:p.first_job,
-    pendingReviews:p.pending_reviews||[], pendingTips:p.pending_tips||[], pendingLunches:p.pending_lunches||[], strikes:p.strikes||[]
+    pendingReviews:p.pending_reviews||[], pendingTips:p.pending_tips||[], pendingLunches:p.pending_lunches||[], strikes:p.strikes||[], avatarUrl:p.avatar_url||''
   }));
   state.team = isAdmin ? allProfs.map((p,i)=>({
     id:p.id, name:p.full_name||'(no name)', role:p.role, status:p.status||'Active',
     initials:initialsOf(p.full_name||'?'), cls:CLS[i%CLS.length], rate:p.hourly_rate,
     score:(p.score==null?6:p.score), email:p.email, phone:p.phone, birthday:p.birthday, zones:p.zones||[], checkins:p.checkins||{}, firstJob:p.first_job,
-    pendingReviews:p.pending_reviews||[], pendingTips:p.pending_tips||[], pendingLunches:p.pending_lunches||[], strikes:p.strikes||[]
+    pendingReviews:p.pending_reviews||[], pendingTips:p.pending_tips||[], pendingLunches:p.pending_lunches||[], strikes:p.strikes||[], avatarUrl:p.avatar_url||''
   })) : null;
 
   // contractor-only auto messages (run before we fetch messages so they appear immediately)
@@ -364,6 +365,11 @@ async function sbLoadAll(){
 
   const inc = (await sb.from('incidents').select('*').order('created_at',{ascending:false})).data || [];
   state.incidents = inc.map(r=>({id:r.id,type:r.type,where:r.where_text,date:r.occurred_on,desc:r.description}));
+
+  const jp = (await sb.from('job_photos').select('*').order('created_at',{ascending:false})).data || [];
+  state.jobPhotos = jp.map(r=>({id:r.id,contractorId:r.contractor_id,contractorName:r.contractor_name,
+    client:r.client,address:r.address,jobDate:r.job_date,note:r.note,
+    beforeUrl:r.before_url,afterUrl:r.after_url,createdAt:r.created_at}));
 
   const msgs = (await sb.from('messages').select('*').order('created_at')).data || [];
   if(isAdmin){
@@ -535,6 +541,134 @@ function toast(msg){
   clearTimeout(toastT); toastT=setTimeout(()=>el.classList.remove('show'),2200);
 }
 
+/* ---------- photos (Supabase Storage) ---------- */
+// shrink a photo in the browser before upload (keeps storage small + uploads fast)
+function compressImage(file, maxDim, quality){
+  maxDim=maxDim||1280; quality=quality||0.8;
+  return new Promise((resolve,reject)=>{
+    const img=new Image(); const url=URL.createObjectURL(file);
+    img.onload=()=>{
+      let w=img.width, h=img.height;
+      if(w>h && w>maxDim){ h=Math.round(h*maxDim/w); w=maxDim; }
+      else if(h>=w && h>maxDim){ w=Math.round(w*maxDim/h); h=maxDim; }
+      const cv=document.createElement('canvas'); cv.width=w; cv.height=h;
+      cv.getContext('2d').drawImage(img,0,0,w,h);
+      URL.revokeObjectURL(url);
+      cv.toBlob(b=> b?resolve(b):reject(new Error('compress failed')), 'image/jpeg', quality);
+    };
+    img.onerror=()=>{ URL.revokeObjectURL(url); reject(new Error('bad image')); };
+    img.src=url;
+  });
+}
+async function uploadImage(path, blob){
+  const { error } = await sb.storage.from(CONFIG.PHOTO_BUCKET).upload(path, blob, {upsert:true, contentType:'image/jpeg'});
+  if(error) throw error;
+  const { data } = sb.storage.from(CONFIG.PHOTO_BUCKET).getPublicUrl(path);
+  return data.publicUrl;
+}
+// pick an image from the device; returns a File via callback
+function pickImage(cb){
+  if(!ONLINE){ toast('Photos need the live app'); return; }
+  const inp=document.createElement('input'); inp.type='file'; inp.accept='image/*';
+  inp.onchange=()=>{ const f=inp.files&&inp.files[0]; if(f) cb(f); };
+  inp.click();
+}
+// avatar bubble that shows a photo if set, else the initials
+function avatarHtml(m, size){
+  const s=size||44; const cls=(m&&m.cls)||'';
+  if(m && m.avatarUrl) return `<div class="avatar ${cls}" style="width:${s}px;height:${s}px;background-image:url('${m.avatarUrl}');background-size:cover;background-position:center;color:transparent"></div>`;
+  return `<div class="avatar ${cls}" style="width:${s}px;height:${s}px">${(m&&m.initials)||'?'}</div>`;
+}
+function pickAvatar(){ pickImage(saveAvatar); }
+async function saveAvatar(file){
+  try{
+    toast('Uploading photo…');
+    const blob=await compressImage(file, 512, 0.85);
+    const url=(await uploadImage('avatars/'+state.me.id+'.jpg', blob))+'?t='+Date.now();
+    const me=state.contractors.find(x=>x.id===state.me.id); if(me) me.avatarUrl=url;
+    const { error } = await sb.from('profiles').update({avatar_url:url}).eq('id',state.me.id);
+    if(error){ toast('Save failed: '+error.message); return; }
+    toast('Profile photo updated ✓'); render();
+  }catch(e){ console.error(e); toast('Could not upload photo'); }
+}
+// full-screen image viewer
+function openImage(url){
+  sheet(`<button class="closex" onclick="closeSheet()">×</button>
+    <img src="${url}" style="width:100%;border-radius:12px;margin-top:8px" alt="photo">`);
+}
+
+/* ---------- before/after job photo log ---------- */
+let photoDraft={before:'',after:'',client:'',date:'',note:''};
+function stashPhotoInputs(){
+  const c=document.getElementById('phClient'); if(c) photoDraft.client=c.value;
+  const d=document.getElementById('phDate');   if(d) photoDraft.date=d.value;
+  const n=document.getElementById('phNote');   if(n) photoDraft.note=n.value;
+}
+function openPhotoEntry(){ photoDraft={before:'',after:'',client:'',date:isoDate(new Date()),note:''}; renderPhotoSheet(); }
+function photoSlot(slot,label){
+  const url=photoDraft[slot];
+  return `<div style="flex:1;text-align:center">
+    <div class="muted" style="font-size:12px;margin-bottom:6px">${label}</div>
+    ${url?`<img src="${url}" style="width:100%;height:110px;object-fit:cover;border-radius:10px">`:`<div style="height:110px;border:1.5px dashed var(--line);border-radius:10px;display:grid;place-items:center;color:var(--muted);font-size:12px">No photo</div>`}
+    <button class="btn ghost sm" style="width:100%;margin-top:6px" onclick="uploadPhotoSlot('${slot}')">${url?'Retake':'Add '+label.toLowerCase()}</button>
+  </div>`;
+}
+function renderPhotoSheet(){
+  sheet(`
+    <button class="closex" onclick="closeSheet()">×</button>
+    <h3>Before &amp; after photos</h3>
+    <label>Client / address</label><input id="phClient" value="${photoDraft.client||''}" placeholder="e.g. 12 Oak St, Barrhaven">
+    <label>Date</label><input id="phDate" type="date" value="${photoDraft.date||isoDate(new Date())}">
+    <div class="btnrow" style="margin-top:12px;gap:10px">${photoSlot('before','Before')}${photoSlot('after','After')}</div>
+    <label style="margin-top:12px">Note (optional)</label><input id="phNote" value="${photoDraft.note||''}" placeholder="anything worth flagging">
+    <button class="btn primary" style="margin-top:16px" onclick="savePhotoEntry()">Save photos</button>
+  `);
+}
+function uploadPhotoSlot(slot){
+  stashPhotoInputs();
+  pickImage(async(file)=>{
+    try{
+      toast('Uploading '+slot+'…');
+      const blob=await compressImage(file,1280,0.8);
+      const url=await uploadImage('jobs/'+state.me.id+'/'+Date.now()+'-'+slot+'.jpg', blob);
+      photoDraft[slot]=url; renderPhotoSheet(); toast(slot+' photo added ✓');
+    }catch(e){ console.error(e); toast('Could not upload photo'); }
+  });
+}
+async function savePhotoEntry(){
+  stashPhotoInputs();
+  if(!photoDraft.before && !photoDraft.after){ toast('Add at least one photo'); return; }
+  const me=state.contractors.find(x=>x.id===state.me.id);
+  const row={contractor_id:state.me.id, contractor_name:me?me.name:'', client:photoDraft.client||'',
+    address:photoDraft.client||'', job_date:photoDraft.date||isoDate(new Date()), note:photoDraft.note||'',
+    before_url:photoDraft.before||null, after_url:photoDraft.after||null};
+  const { data, error } = await sb.from('job_photos').insert(row).select().single();
+  if(error){ toast('Save failed: '+error.message); return; }
+  (state.jobPhotos=state.jobPhotos||[]).unshift({id:data.id,contractorId:state.me.id,contractorName:row.contractor_name,
+    client:row.client,address:row.address,jobDate:row.job_date,note:row.note,
+    beforeUrl:row.before_url,afterUrl:row.after_url,createdAt:data.created_at});
+  closeSheet(); toast('Photos saved ✓'); render();
+}
+async function deletePhotoEntry(id){
+  if(!confirm('Delete these photos?')) return;
+  if(ONLINE){ const {error}=await sb.from('job_photos').delete().eq('id',id); if(error){toast('Delete failed: '+error.message);return;} }
+  state.jobPhotos=(state.jobPhotos||[]).filter(p=>p.id!==id);
+  toast('Photos deleted'); render();
+}
+// a list of before/after entries; `canDelete` shows a delete button (owner only)
+function photoEntriesHtml(cid, canDelete){
+  const list=(state.jobPhotos||[]).filter(p=>p.contractorId===cid);
+  if(!list.length) return `<div class="card muted">No before/after photos yet.</div>`;
+  const thumb=(url,lbl)=> url?`<div style="flex:1"><div class="muted" style="font-size:11px;margin-bottom:3px">${lbl}</div><img src="${url}" onclick="openImage('${url}')" style="width:100%;height:90px;object-fit:cover;border-radius:8px;cursor:pointer"></div>`
+    :`<div style="flex:1"><div class="muted" style="font-size:11px;margin-bottom:3px">${lbl}</div><div style="height:90px;border:1.5px dashed var(--line);border-radius:8px;display:grid;place-items:center;color:var(--muted);font-size:11px">—</div></div>`;
+  return list.map(p=>`<div class="card">
+    <div class="spread"><strong style="font-size:14px">${p.client||'Job'}</strong><span class="muted" style="font-size:12px">${p.jobDate?fmtDate(p.jobDate):''}</span></div>
+    <div class="btnrow" style="gap:8px;margin-top:8px">${thumb(p.beforeUrl,'Before')}${thumb(p.afterUrl,'After')}</div>
+    ${p.note?`<div class="muted" style="font-size:12px;margin-top:8px">📝 ${p.note}</div>`:''}
+    ${canDelete?`<button class="btn ghost sm" style="width:100%;margin-top:8px;color:var(--red)" onclick="deletePhotoEntry('${p.id}')">Delete</button>`:''}
+  </div>`).join('');
+}
+
 /* ---------- login / logout (demo of role-based access) ---------- */
 function login(r){   // demo / offline only
   if(r==='admin'){ session={role:'admin',name:'DRC Office'}; adminTab='dashboard'; }
@@ -682,6 +816,35 @@ function showTutorial(){
     </div>
   `);
 }
+/* ---------- first-login supply / readiness checklist ---------- */
+const SUPPLIES=[
+  'Vacuum','Mop system','Carrying caddy or tote','Microfibre cloths','All-purpose cleaner',
+  'Glass / window cleaner','Toilet bowl cleaner','Floor cleaner','Stainless steel cleaner',
+  'Cream cleaner (Bar Keepers Friend / Vim)','Oven cleaner','Sponges and scrub brushes','Gloves'
+];
+let supplyPrompted=false;
+function maybeShowSupplyChecklist(){
+  if(supplyPrompted) return;
+  try{ if(localStorage.getItem('drcSuppliesAck')==='1') return; }catch(e){}
+  supplyPrompted=true;
+  setTimeout(showSupplyChecklist, 400);   // let the home screen paint first
+}
+function showSupplyChecklist(){
+  sheet(`
+    <button class="closex" onclick="closeSheet()">×</button>
+    <h3>Before you head out ✅</h3>
+    <div class="notice" style="background:var(--amber-bg);border-color:#fde68a;color:#92400e">
+      Every job must be <strong>fully set up in Jobber</strong>, and you must arrive with <strong>all supplies ready to go</strong> — out of their boxes/packaging and restocked before you leave.
+    </div>
+    <label style="margin-top:6px">Required supplies — tap each to check it off</label>
+    <div id="supplyList" style="margin-top:8px">
+      ${SUPPLIES.map(s=>`<div class="checkrow" onclick="this.classList.toggle('sel')"><span class="cb">✓</span>${s}</div>`).join('')}
+    </div>
+    <button class="btn primary" style="margin-top:16px" onclick="ackSupplies()">I have everything — got it</button>
+    <div class="muted" style="text-align:center;font-size:12px;margin-top:8px">You can reopen this anytime from your Home screen.</div>
+  `);
+}
+function ackSupplies(){ try{ localStorage.setItem('drcSuppliesAck','1'); }catch(e){} closeSheet(); toast("You're all set ✓"); }
 
 /* ---------- nav ---------- */
 function setTab(t){ ctab=t; render(); }
@@ -758,7 +921,7 @@ function renderTabbar(){
    ============================================================ */
 function renderContractor(){
   const c=document.getElementById('content');
-  if(ctab==='home') c.innerHTML=viewHome();
+  if(ctab==='home'){ c.innerHTML=viewHome(); maybeShowSupplyChecklist(); }
   else if(ctab==='jobs') c.innerHTML=viewJobs();
   else if(ctab==='invoices') c.innerHTML=viewInvoices();
   else if(ctab==='review'){ c.innerHTML=viewReview(); buildQR(); }
@@ -836,11 +999,13 @@ function viewHome(){
       View your assigned jobs, your schedule, and <strong>clock in/out in the Jobber app</strong> (a separate app). This DRC Hub is only for your <strong>availability, extra assignments, invoices, reviews, and messages with the office.</strong>
     </div>
   </div>
+  <button class="btn ghost" style="width:100%;margin-top:8px" onclick="showSupplyChecklist()">✅ Supply &amp; readiness checklist</button>
 
   <h2 class="section">Welcome back</h2>
   <div class="card">
-    <div class="row"><div class="avatar">${me.initials}</div>
-      <div><h3 style="margin:0">${me.name}</h3><div class="muted">${me.status} contractor</div></div></div>
+    <div class="row">
+      <div onclick="pickAvatar()" style="cursor:pointer;position:relative" title="Change photo">${avatarHtml(me,52)}<span style="position:absolute;right:-2px;bottom:-2px;background:var(--teal);color:#fff;border-radius:50%;width:18px;height:18px;font-size:11px;display:grid;place-items:center">✎</span></div>
+      <div><h3 style="margin:0">${me.name}</h3><div class="muted">${me.status} contractor · tap photo to change</div></div></div>
   </div>
 
   <h2 class="section">Your status</h2>
@@ -866,6 +1031,11 @@ function viewHome(){
     <div style="font-size:13px;opacity:.94;margin-top:8px;line-height:1.5">The secret? <strong>Just ask every customer.</strong> Tap to learn exactly how.</div>
     <div style="background:#fff;color:#045ea9;border-radius:10px;text-align:center;font-size:13px;font-weight:600;padding:10px;margin-top:12px">Learn how to get reviews →</div>
   </div>
+
+  <h2 class="section">Before &amp; after photos</h2>
+  <p class="muted" style="margin-top:-4px;font-size:13px">Snap the space before and after your clean — helps with quality and any client questions.</p>
+  <button class="btn primary" onclick="openPhotoEntry()">${svg('<path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/>')} Add before/after photos</button>
+  <div style="margin-top:12px">${photoEntriesHtml(me.id, true)}</div>
 
   <h2 class="section">Quick actions</h2>
   <div class="btnrow" style="margin-bottom:10px">
@@ -1561,7 +1731,7 @@ function adminTeamView(){
     const due = (m.role||'contractor')==='contractor' && checkinDue(m);
     const search=(m.name+' '+((m.zones||[]).join(' '))+' '+(m.role||'contractor')).toLowerCase();
     return `<div class="card spread teamrow" data-search="${search}" style="cursor:pointer" onclick="openProfile('${m.id}')">
-      <div class="row"><div class="avatar ${m.cls||CLS[i%CLS.length]}">${m.initials}</div>
+      <div class="row">${avatarHtml(m,44)}
         <div><h3 style="font-size:15px;margin:0">${m.name}</h3>
           <div class="row" style="gap:6px;margin-top:3px">
             <span class="pill ${m.role==='admin'?'blue':'gray'}">${m.role==='admin'?'Admin':'Contractor'}</span>
@@ -1644,7 +1814,7 @@ function adminProfileView(id){
   return `
   <button class="btn ghost sm" onclick="backToTeam()">‹ Team</button>
   <div class="card" style="margin-top:10px">
-    <div class="row"><div class="avatar ${m.cls}">${m.initials}</div>
+    <div class="row">${avatarHtml(m,48)}
       <div><h3 style="margin:0">${m.name}</h3>
         <span class="pill ${m.role==='admin'?'blue':'gray'}">${m.role==='admin'?'Admin':'Contractor'}</span></div></div>
     <div class="divider"></div>
@@ -1740,6 +1910,8 @@ function adminProfileView(id){
       <button class="btn ghost sm" onclick="addLunchToProfile('${m.id}')">+ Paid Lunch</button>
     </div>
   </div>
+  <h2 class="section">Job photos</h2>
+  ${photoEntriesHtml(m.id, false)}
   <h2 class="section">Check-in cadence</h2>
   <div class="card">
     <div class="spread"><span class="muted" style="font-size:13px">First job date</span>
