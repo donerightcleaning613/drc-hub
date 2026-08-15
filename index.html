@@ -322,15 +322,17 @@ async function sbLoadAll(){
   if(prof.status==='Removed'){ await sb.auth.signOut(); session=null;
     toast('Your account has been deactivated — please contact the office.'); return false; }
   const isAdmin = prof.role === 'admin';
+  const isLead  = prof.role === 'team_lead';   // team leads: contact list + guide only
+  const isStaff = isAdmin || isLead;           // both can see the full contractor list
   session = { role:prof.role, name:prof.full_name||user.email, id:user.id };
   const _nm=(prof.full_name||'').trim();
   session.needsName = !_nm || _nm.includes('@');   // treat an email-as-name as "no name yet"
   state.me = { id:user.id, name:prof.full_name||user.email, initials:initialsOf(prof.full_name||user.email) };
   chatReadAt = prof.chat_read_at ? new Date(prof.chat_read_at).getTime() : 0;
 
-  // admins load everyone, then split into contractors (scheduling board) + full team (role mgmt)
-  let allProfs = isAdmin ? ((await sb.from('profiles').select('*').order('full_name')).data || []) : [prof];
-  let profs = isAdmin ? allProfs.filter(p=>p.role==='contractor' && p.status!=='Removed') : [prof];
+  // staff (admins + team leads) load everyone; admins additionally get the full team for role mgmt
+  let allProfs = isStaff ? ((await sb.from('profiles').select('*').order('full_name')).data || []) : [prof];
+  let profs = isStaff ? allProfs.filter(p=>p.role==='contractor' && p.status!=='Removed') : [prof];
   state.contractors = profs.map((p,i)=>({
     id:p.id, name:p.full_name||'Contractor', initials:initialsOf(p.full_name||'Contractor'),
     cls:CLS[i%CLS.length], zones:p.zones||[], status:p.status||'Active', avail:{}, template:{},
@@ -346,7 +348,7 @@ async function sbLoadAll(){
   })) : null;
 
   // contractor-only auto messages (run before we fetch messages so they appear immediately)
-  if(!isAdmin){ await maybeDailyMotivation(prof, user.id); await maybeBirthday(prof, user.id); }
+  if(!isStaff){ await maybeDailyMotivation(prof, user.id); await maybeBirthday(prof, user.id); }
 
   const wks = weekStarts();
   const av = (await sb.from('availability').select('*').in('week_start', wks)).data || [];
@@ -495,6 +497,7 @@ let activeAdminChat = null;
 let availWeek = 0;     // which of the next 4 weeks the contractor is editing
 let adminWeek = 0;     // which week the admin scheduling board is viewing
 let adminTab = 'dashboard';   // 'dashboard' | 'invoices'
+let leadTab = 'home';         // team-lead portal: 'home' | 'guide'
 let invFilter = 'unpaid';     // 'all' | 'unpaid' | 'paid'
 let session = loadSession();  // {role,name} or null when logged out
 let authMode = 'login';       // 'login' | 'signup'
@@ -864,6 +867,7 @@ function render(){
   role=session.role;
   hr.innerHTML=`<div class="hdruser"><span onclick="openNameSetup()" style="cursor:pointer" title="Edit your name">${session.name}</span><button class="logoutbtn" onclick="logout()">Log out</button></div>`;
   if(role==='contractor'){ renderContractor(); renderTabbar(); }
+  else if(role==='team_lead'){ renderLead(); renderLeadTabbar(); }
   else { renderAdmin(); renderAdminTabbar(); }
   DB.save();
 }
@@ -920,6 +924,53 @@ function renderTabbar(){
 /* ============================================================
    CONTRACTOR VIEWS
    ============================================================ */
+/* ---------- team lead portal (2 tabs: Home + Guide) ---------- */
+function setLeadTab(t){ leadTab=t; render(); }
+function renderLeadTabbar(){
+  const tabs=[['home','Home',ICON.home],['guide','Guide',ICON.more]];
+  document.getElementById('tabbar').innerHTML=tabs.map(([id,lbl,ic])=>
+    `<button class="${leadTab===id?'on':''}" onclick="setLeadTab('${id}')">${svg(ic)}<span>${lbl}</span></button>`).join('');
+}
+function renderLead(){
+  const c=document.getElementById('content');
+  if(leadTab==='guide'){ c.innerHTML=viewMore(); }
+  else { c.innerHTML=viewLeadHome(); maybeShowSupplyChecklist(); }
+}
+function leadContactCard(c){
+  const search=(c.name+' '+((c.zones||[]).join(' '))).toLowerCase();
+  return `<div class="card leadrow" data-search="${search}">
+    <div class="row">${avatarHtml(c,44)}
+      <div style="min-width:0"><h3 style="font-size:15px;margin:0">${c.name}</h3>
+        <div class="muted" style="font-size:12px">${(c.zones||[]).join(', ')||'—'}</div></div></div>
+    ${c.phone?`<div class="btnrow" style="margin-top:10px">
+        <button class="btn ghost sm" style="flex:1" onclick="location.href='tel:${c.phone}'">📞 Call</button>
+        <button class="btn ghost sm" style="flex:1" onclick="location.href='sms:${c.phone}'">💬 Text</button>
+      </div>
+      <div class="muted" style="font-size:12px;margin-top:8px">${c.phone}${c.email?` · ${c.email}`:''}</div>`
+      :`<div class="muted" style="font-size:12px;margin-top:8px">No phone on file${c.email?` · ${c.email}`:''}</div>`}
+  </div>`;
+}
+function filterLeadList(){
+  const box=document.getElementById('leadSearch'); if(!box) return;
+  const q=box.value.trim().toLowerCase(); let shown=0;
+  document.querySelectorAll('#leadList .leadrow').forEach(el=>{
+    const hit=!q||(el.dataset.search||'').includes(q); el.style.display=hit?'':'none'; if(hit)shown++; });
+  const none=document.getElementById('leadNone'); if(none) none.style.display=(q&&shown===0)?'':'none';
+}
+function viewLeadHome(){
+  const list=(state.contractors||[]).filter(c=>(c.status||'Active')!=='Removed');
+  return `
+  <h2 class="section">Team lead</h2>
+  <div class="notice">You're set up as a <strong>team lead</strong>. Use this portal to reach the contractors you're training or working with, and to review the readiness checklist.</div>
+  <button class="btn primary" onclick="showSupplyChecklist()">✅ Supply &amp; readiness checklist</button>
+
+  <h2 class="section">Contractors (${list.length})</h2>
+  <p class="muted" style="margin-top:-4px;font-size:13px">Tap to call or text a contractor you're working with.</p>
+  ${list.length>6?`<input id="leadSearch" placeholder="Search by name or zone…" oninput="filterLeadList()" style="width:100%;margin-bottom:12px">`:''}
+  <div id="leadList">${list.length?list.map(leadContactCard).join(''):'<div class="card muted">No contractors yet.</div>'}</div>
+  <div id="leadNone" class="card muted" style="display:none">No matches.</div>
+  `;
+}
 function renderContractor(){
   const c=document.getElementById('content');
   if(ctab==='home'){ c.innerHTML=viewHome(); maybeShowSupplyChecklist(); }
@@ -1735,7 +1786,7 @@ function adminTeamView(){
       <div class="row">${avatarHtml(m,44)}
         <div><h3 style="font-size:15px;margin:0">${m.name}</h3>
           <div class="row" style="gap:6px;margin-top:3px">
-            <span class="pill ${m.role==='admin'?'blue':'gray'}">${m.role==='admin'?'Admin':'Contractor'}</span>
+            <span class="pill ${m.role==='admin'?'blue':(m.role==='team_lead'?'amber':'gray')}">${m.role==='admin'?'Admin':(m.role==='team_lead'?'Team lead':'Contractor')}</span>
             ${(m.role||'contractor')==='contractor'?`<span class="pill ${scoreCls(m.score)}">${m.score??6}/10</span>`:''}
             ${m.rate!=null?`<span class="muted" style="font-size:12px">$${Number(m.rate).toFixed(2)}/hr</span>`:''}
             ${(m.strikes&&m.strikes.length)?`<span onclick="event.stopPropagation();showStrikes('${m.id}')" title="View strikes" style="cursor:pointer;color:var(--red);font-weight:800;letter-spacing:1px">${'✕'.repeat(Math.min(m.strikes.length,3))}</span>`:''}
@@ -1817,7 +1868,7 @@ function adminProfileView(id){
   <div class="card" style="margin-top:10px">
     <div class="row">${avatarHtml(m,48)}
       <div><h3 style="margin:0">${m.name}</h3>
-        <span class="pill ${m.role==='admin'?'blue':'gray'}">${m.role==='admin'?'Admin':'Contractor'}</span></div></div>
+        <span class="pill ${m.role==='admin'?'blue':(m.role==='team_lead'?'amber':'gray')}">${m.role==='admin'?'Admin':(m.role==='team_lead'?'Team lead':'Contractor')}</span></div></div>
     <div class="divider"></div>
     <table style="width:100%;font-size:14px">
       <tr><td class="muted" style="padding:5px 0">Email</td><td style="text-align:right">${m.email||'—'}</td></tr>
@@ -1936,24 +1987,26 @@ function adminProfileView(id){
     <button class="btn ${(!k.monthlyLast||overdue(k.monthlyLast))?'primary':'ghost'}" style="margin-top:10px" onclick="markMonthly('${id}')">Mark monthly check-in done today</button>
   </div>`:''}
   ${self?'':`<h2 class="section">Manage</h2>
-  <div class="btnrow">
-    <button class="btn ${m.role==='admin'?'ghost':'primary'}" onclick="toggleAdminRole('${m.id}')">${m.role==='admin'?'Make contractor':'Make admin'}</button>
-    <button class="btn red" onclick="removeUser('${m.id}')">Remove</button>
-  </div>`}
+  <div class="muted" style="font-size:12px;margin:-4px 0 8px">Current role: <strong>${m.role==='admin'?'Admin':(m.role==='team_lead'?'Team lead':'Contractor')}</strong></div>
+  <div class="btnrow" style="flex-wrap:wrap;gap:8px">
+    ${m.role!=='contractor'?`<button class="btn ghost sm" onclick="setRole('${m.id}','contractor')">Make contractor</button>`:''}
+    ${m.role!=='team_lead'?`<button class="btn ghost sm" onclick="setRole('${m.id}','team_lead')">Make team lead</button>`:''}
+    ${m.role!=='admin'?`<button class="btn ghost sm" onclick="setRole('${m.id}','admin')">Make admin</button>`:''}
+  </div>
+  <button class="btn red" style="width:100%;margin-top:10px" onclick="removeUser('${m.id}')">Remove</button>`}
   `;
 }
-async function toggleAdminRole(id){
+async function setRole(id, role){
   const list = state.team || state.contractors || [];
   const m = list.find(x=>x.id===id); if(!m) return;
   if(session && id===session.id){ toast("You can't change your own role"); return; }
-  const newRole = m.role==='admin'?'contractor':'admin';
   if(ONLINE){
-    const { error } = await sb.from('profiles').update({role:newRole}).eq('id',id);
+    const { error } = await sb.from('profiles').update({role}).eq('id',id);
     if(error){ toast('Update failed: '+error.message); return; }
-    toast(newRole==='admin'?'Promoted to admin ✓':'Changed to contractor ✓');
+    toast(role==='admin'?'Promoted to admin ✓':(role==='team_lead'?'Now a team lead ✓':'Now a contractor ✓'));
     await sbRefresh();
   } else {
-    m.role=newRole; toast('Role updated (demo)'); render();
+    m.role=role; toast('Role updated (demo)'); render();
   }
 }
 async function removeUser(id){
