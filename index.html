@@ -1161,14 +1161,37 @@ function earningsSection(){
     ${missing?`<div class="muted" style="font-size:12px;margin-top:4px">Some weeks are awaiting a pay rate from the office.</div>`:''}
   </div>
   ${sorted.length?sorted.map(i=>{ const t=invoiceTotal(i);
-    return `<div class="card spread">
-      <div><h3 style="font-size:15px;margin:0">${i.start} → ${i.end}</h3>
-        <div class="muted">${i.hours||0} hrs${i.premiumHours?` + ${i.premiumHours} premium`:''}</div></div>
-      <div style="text-align:right">
-        <div style="font-weight:700;font-size:16px">${t?'$'+t.total.toFixed(2):'—'}</div>
-        <span class="pill ${i.paid?'green':'amber'}">${i.paid?'Paid':'Pending'}</span></div>
+    return `<div class="card" style="cursor:pointer" onclick="toggleInvDetail('${i.id}')">
+      <div class="spread">
+        <div><h3 style="font-size:15px;margin:0">${i.start} → ${i.end}</h3>
+          <div class="muted">${i.hours||0} hrs${i.premiumHours?` + ${i.premiumHours} premium`:''}</div></div>
+        <div style="text-align:right">
+          <div style="font-weight:700;font-size:16px">${t?'$'+t.total.toFixed(2):'—'}</div>
+          <span class="pill ${i.paid?'green':'amber'}">${i.paid?'Paid':'Pending'}</span></div>
+      </div>
+      <div id="invd_${i.id}" style="display:none;margin-top:10px;border-top:1px solid var(--line);padding-top:10px">
+        ${t? invBreakdownRows(i,t) : `<div class="muted" style="font-size:13px">Waiting on a pay rate from the office to show your total.</div>`}
+        ${i.notes?`<div class="muted" style="font-size:12px;margin-top:8px">📝 ${i.notes}</div>`:''}
+      </div>
+      <div class="muted" style="font-size:12px;margin-top:8px;text-align:center" id="invtoggle_${i.id}">Tap to see breakdown ▾</div>
     </div>`;}).join(''):`<div class="card muted">No invoices yet this year.</div>`}
   `;
+}
+function invBreakdownRows(i,t){
+  const row=(label,detail,amt)=>`<div class="spread" style="font-size:13px;padding:3px 0"><span>${label}${detail?` <span class="muted" style="font-size:11px">${detail}</span>`:''}</span><span style="font-weight:600">$${amt.toFixed(2)}</span></div>`;
+  let h=row('Regular hours', `${i.hours||0} × $${t.rate.toFixed(2)}`, t.reg);
+  if(i.premiumHours) h+=row('Premium hours', `${i.premiumHours} × $${Number(CONFIG.PREMIUM_RATE).toFixed(2)}`, t.prem);
+  if(t.reviewCount)  h+=row('5-star reviews', `${t.reviewCount} × $${Number(CONFIG.REVIEW_RATE).toFixed(2)}`, t.reviewsAmt);
+  if(t.tip)          h+=row('Tips', '', t.tip);
+  if(t.lunchAmt)     h+=row('Paid lunch', `${t.lunchCount} × $${Number(CONFIG.LUNCH_RATE).toFixed(2)}`, t.lunchAmt);
+  h+=`<div class="spread" style="font-size:14px;padding:7px 0 0;margin-top:4px;border-top:1px solid var(--line)"><span style="font-weight:700">Total</span><span style="font-weight:800;color:#045ea9">$${t.total.toFixed(2)}</span></div>`;
+  return h;
+}
+function toggleInvDetail(id){
+  const d=document.getElementById('invd_'+id); if(!d) return;
+  const open=d.style.display==='none';
+  d.style.display=open?'block':'none';
+  const tog=document.getElementById('invtoggle_'+id); if(tog) tog.textContent=open?'Hide breakdown ▴':'Tap to see breakdown ▾';
 }
 function submitInvoice(){
   const start=val('invStart'),end=val('invEnd'),hours=parseFloat(val('invHours')),
