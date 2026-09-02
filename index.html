@@ -1401,7 +1401,7 @@ function openAvail(){
   const days=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
   const allZones=['Westboro','Hintonburg','Kanata/Stittsville','Orleans','Vanier','Beacon Hill','Barrhaven',
     'Riverside South','Centretown','The Glebe','Old Ottawa South','Nepean','Bells Corners','Downtown',
-    'Richmond','Rockland','Cumberland','Carleton Place','Kemptville'];
+    'Richmond','Rockland','Cumberland','Carleton Place','Kemptville','Findlay Creek','Greely'];
   // migrate any older separate Kanata / Stittsville selections to the combined zone
   if(me.zones.includes('Kanata')||me.zones.includes('Stittsville')){
     me.zones = me.zones.filter(z=>z!=='Kanata'&&z!=='Stittsville');
@@ -1635,7 +1635,8 @@ const ZONE_TERMS=[
   ['riverside south','Riverside South'],['centretown','Centretown'],['glebe','The Glebe'],
   ['old ottawa south','Old Ottawa South'],['nepean','Nepean'],['bells corners','Bells Corners'],
   ['downtown','Downtown'],['richmond','Richmond'],['rockland','Rockland'],['cumberland','Cumberland'],
-  ['carleton place','Carleton Place'],['kemptville','Kemptville']
+  ['carleton place','Carleton Place'],['kemptville','Kemptville'],
+  ['findlay creek','Findlay Creek'],['greely','Greely']
 ];
 function normZone(z){ z=(z||'').toLowerCase(); if(z==='kanata'||z==='stittsville') return 'kanata/stittsville'; return z; }
 function findByAddress(){
