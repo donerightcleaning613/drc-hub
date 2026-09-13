@@ -243,6 +243,34 @@ const CONFIG = {
   SUPABASE_ANON_KEY: "sb_publishable_dx0JsbuuiWZRCWt2QeYaNQ_xBNcJrfY"
 };
 
+/* ===== COMPANIES (multi-brand: DRC + Tidy Otter) =====================
+   Same app, same URL. Each contractor registers under one company and
+   sees that company's branding, review link, office email and support
+   number. Admins toggle between companies. Pay rates + zones are shared.
+   ▶ Fill in the three Tidy Otter placeholders below. */
+const COMPANIES = {
+  drc: {
+    key:'drc', name:'DRC', brand:'Contractor Hub', full:'Done Right Cleaning',
+    officeEmail:'contact@donerightcleaning.ca',
+    reviewUrl:'https://g.page/r/CS4XjoAlEYTgEBM/review',
+    supportPhone:'613-324-6779'
+  },
+  tidyotter: {
+    key:'tidyotter', name:'Tidy Otter', brand:'Contractor Hub', full:'The Tidy Otter',
+    officeEmail:'contact@thetidyotter.ca',
+    reviewUrl:'https://g.page/r/CTBiO5Kybjc_EBM/review',
+    supportPhone:'613-880-5404'
+  }
+};
+// which company's branding/config applies right now (admins follow their toggle)
+function activeCompany(){
+  if(session && session.role==='admin') return COMPANIES[adminCompany]?adminCompany:'drc';
+  const c = session && session.company;
+  return COMPANIES[c] ? c : 'drc';
+}
+function co(){ return COMPANIES[activeCompany()]; }
+function companyName(key){ return (COMPANIES[key]||COMPANIES.drc).name; }
+
 /* ---------- Supabase client (online when configured) ---------- */
 const ONLINE = !!(window.supabase && CONFIG.SUPABASE_URL && CONFIG.SUPABASE_ANON_KEY
                   && !CONFIG.SUPABASE_ANON_KEY.startsWith('PASTE_'));
@@ -257,7 +285,7 @@ let keepPref = true; try{ keepPref = localStorage.getItem('drcKeep') !== 'false'
 let sb = ONLINE ? makeClient(keepPref) : null;
 const CLS = ['','b','c','d','e'];
 function initialsOf(name){ return (name||'?').split(/\s+/).map(w=>w[0]).join('').slice(0,2).toUpperCase(); }
-const BOT_GREETING = "Hi 👋 I'm the DRC assistant. Ask me anything — pay, scheduling, extra assignments, or how to submit your weekly invoice. If I can't help, you can reach a real person.";
+const BOT_GREETING = "Hi 👋 I'm the office assistant. Ask me anything — pay, scheduling, extra assignments, or how to submit your weekly invoice. If I can't help, you can reach a real person.";
 /* ---------- text notifications (Supabase → GHL webhook sends the SMS) ---------- */
 function queueSms(cid, body, kind){
   if(!ONLINE || !cid) return;
@@ -324,27 +352,30 @@ async function sbLoadAll(){
   const isAdmin = prof.role === 'admin';
   const isLead  = prof.role === 'team_lead';   // team leads: contact list + guide only
   const isStaff = isAdmin || isLead;           // both can see the full contractor list
-  session = { role:prof.role, name:prof.full_name||user.email, id:user.id };
+  session = { role:prof.role, name:prof.full_name||user.email, id:user.id, company:(prof.company||'drc') };
   const _nm=(prof.full_name||'').trim();
   session.needsName = !_nm || _nm.includes('@');   // treat an email-as-name as "no name yet"
-  state.me = { id:user.id, name:prof.full_name||user.email, initials:initialsOf(prof.full_name||user.email) };
+  state.me = { id:user.id, name:prof.full_name||user.email, initials:initialsOf(prof.full_name||user.email), company:(prof.company||'drc') };
   chatReadAt = prof.chat_read_at ? new Date(prof.chat_read_at).getTime() : 0;
+  if(isAdmin && !COMPANIES[adminCompany]) adminCompany='drc';
 
-  // staff (admins + team leads) load everyone; admins additionally get the full team for role mgmt
+  // staff (admins + team leads) load everyone (both companies); we scope by company below
   let allProfs = isStaff ? ((await sb.from('profiles').select('*').order('full_name')).data || []) : [prof];
   let profs = isStaff ? allProfs.filter(p=>p.role==='contractor' && p.status!=='Removed') : [prof];
-  state.contractors = profs.map((p,i)=>({
+  state.allContractors = profs.map((p,i)=>({
     id:p.id, name:p.full_name||'Contractor', initials:initialsOf(p.full_name||'Contractor'),
     cls:CLS[i%CLS.length], zones:p.zones||[], status:p.status||'Active', avail:{}, template:{},
     locked:!!p.avail_locked, lockedTemplate:p.avail_template||null, hourly_rate:p.hourly_rate,
     score:(p.score==null?6:p.score), email:p.email, phone:p.phone, birthday:p.birthday, checkins:p.checkins||{}, firstJob:p.first_job,
-    pendingReviews:p.pending_reviews||[], pendingTips:p.pending_tips||[], pendingLunches:p.pending_lunches||[], strikes:p.strikes||[], avatarUrl:p.avatar_url||''
+    pendingReviews:p.pending_reviews||[], pendingTips:p.pending_tips||[], pendingLunches:p.pending_lunches||[], strikes:p.strikes||[], avatarUrl:p.avatar_url||'',
+    company:(p.company||'drc')
   }));
-  state.team = isAdmin ? allProfs.map((p,i)=>({
+  state.allTeam = isAdmin ? allProfs.map((p,i)=>({
     id:p.id, name:p.full_name||'(no name)', role:p.role, status:p.status||'Active',
     initials:initialsOf(p.full_name||'?'), cls:CLS[i%CLS.length], rate:p.hourly_rate,
     score:(p.score==null?6:p.score), email:p.email, phone:p.phone, birthday:p.birthday, zones:p.zones||[], checkins:p.checkins||{}, firstJob:p.first_job,
-    pendingReviews:p.pending_reviews||[], pendingTips:p.pending_tips||[], pendingLunches:p.pending_lunches||[], strikes:p.strikes||[], avatarUrl:p.avatar_url||''
+    pendingReviews:p.pending_reviews||[], pendingTips:p.pending_tips||[], pendingLunches:p.pending_lunches||[], strikes:p.strikes||[], avatarUrl:p.avatar_url||'',
+    company:(p.company||'drc')
   })) : null;
 
   // contractor-only auto messages (run before we fetch messages so they appear immediately)
@@ -352,14 +383,14 @@ async function sbLoadAll(){
 
   const wks = weekStarts();
   const av = (await sb.from('availability').select('*').in('week_start', wks)).data || [];
-  av.forEach(r=>{ const c=state.contractors.find(x=>x.id===r.contractor_id); if(c) c.avail[r.week_start]=r.data||{}; });
+  av.forEach(r=>{ const c=state.allContractors.find(x=>x.id===r.contractor_id); if(c) c.avail[r.week_start]=r.data||{}; });
 
   const asg = (await sb.from('assignments').select('*').order('created_at',{ascending:false})).data || [];
-  state.premiumOffers = asg.map(a=>({id:a.id,to:a.contractor_id,client:a.client,date:a.job_date,
+  state.allOffers = asg.map(a=>({id:a.id,to:a.contractor_id,client:a.client,date:a.job_date,
     pay:a.pay||'$27/hr',reasons:a.reasons||[],addr:a.address,status:a.status}));
 
   const inv = (await sb.from('invoices').select('*').order('submitted_at',{ascending:false})).data || [];
-  state.invoices = inv.map(i=>({id:i.id,contractorId:i.contractor_id,contractor:i.contractor_name,
+  state.allInvoices = inv.map(i=>({id:i.id,contractorId:i.contractor_id,contractor:i.contractor_name,
     start:i.week_start,end:i.week_end,hours:Number(i.hours)||0,premiumHours:Number(i.premium_hours)||0,
     notes:i.notes||'',paid:!!i.paid,status:i.paid?'Paid':'Submitted',
     bonus:Number(i.bonus)||0,bonusNote:i.bonus_note||'',tipLog:i.tip_log||[],lunchLog:i.lunch_log||[],
@@ -369,7 +400,7 @@ async function sbLoadAll(){
   state.incidents = inc.map(r=>({id:r.id,type:r.type,where:r.where_text,date:r.occurred_on,desc:r.description}));
 
   const jp = (await sb.from('job_photos').select('*').order('created_at',{ascending:false})).data || [];
-  state.jobPhotos = jp.map(r=>({id:r.id,contractorId:r.contractor_id,contractorName:r.contractor_name,
+  state.allJobPhotos = jp.map(r=>({id:r.id,contractorId:r.contractor_id,contractorName:r.contractor_name,
     client:r.client,address:r.address,jobDate:r.job_date,note:r.note,
     beforeUrl:r.before_url,afterUrl:r.after_url,createdAt:r.created_at}));
 
@@ -377,8 +408,8 @@ async function sbLoadAll(){
   if(isAdmin){
     const byC = {};
     msgs.filter(m=>(m.kind||'chat')==='chat').forEach(m=>{ (byC[m.contractor_id]=byC[m.contractor_id]||[]).push(m); });  // ignore auto messages in the inbox
-    state.adminChats = Object.keys(byC).map(cid=>{
-      const c = state.contractors.find(x=>x.id===cid) || {name:'Contractor',initials:'?',cls:''};
+    state.allChats = Object.keys(byC).map(cid=>{
+      const c = (state.allContractors||[]).find(x=>x.id===cid) || (state.allTeam||[]).find(x=>x.id===cid) || {name:'Contractor',initials:'?',cls:''};
       const log = byC[cid].map(m=>({from:m.sender==='contractor'?'me':m.sender,text:m.body,t:new Date(m.created_at).getTime()}));
       const last = byC[cid][byC[cid].length-1];
       return {id:cid, contractor:c.name, initials:c.initials, cls:c.cls,
@@ -391,11 +422,26 @@ async function sbLoadAll(){
 
   if(isAdmin){
     const ns = (await sb.from('notifications').select('*').order('created_at',{ascending:false})).data || [];
-    state.notifications = ns.map(n=>({id:n.id,type:n.type,contractor:n.contractor_name,
+    state.allNotifs = ns.map(n=>({id:n.id,type:n.type,contractorId:n.contractor_id,contractor:n.contractor_name,
       summary:n.summary,details:n.details||[],read:!!n.read,t:new Date(n.created_at).getTime()}));
-  } else { state.notifications = null; }
+  } else { state.allNotifs = null; state.notifications = null; }
+
+  applyCompanyScope();
   return true;
 }
+// re-derive the working lists from the master lists for the active company
+function applyCompanyScope(){
+  const cmp = (session && session.role==='admin') ? adminCompany : ((session && session.company) || 'drc');
+  if(state.allContractors) state.contractors = state.allContractors.filter(c=>(c.company||'drc')===cmp);
+  const ids = new Set((state.contractors||[]).map(c=>c.id));
+  if(state.allTeam) state.team = state.allTeam.filter(m=> m.role==='admin' || (m.company||'drc')===cmp);
+  if(state.allInvoices)  state.invoices      = state.allInvoices.filter(i=>ids.has(i.contractorId));
+  if(state.allOffers)    state.premiumOffers = state.allOffers.filter(o=>ids.has(o.to));
+  if(state.allJobPhotos) state.jobPhotos     = state.allJobPhotos.filter(p=>ids.has(p.contractorId));
+  if(state.allChats)     state.adminChats    = state.allChats.filter(ch=>ids.has(ch.id));
+  if(state.allNotifs)    state.notifications = state.allNotifs.filter(n=>ids.has(n.contractorId));
+}
+function setAdminCompany(c){ if(!COMPANIES[c]) return; adminCompany=c; profileId=null; activeAdminChat=null; applyCompanyScope(); render(); }
 // fire-and-forget write with an error toast on failure
 function sbDo(p){ Promise.resolve(p).then(r=>{ if(r&&r.error){ console.error(r.error); toast('Save failed — check connection'); } })
   .catch(e=>{ console.error(e); toast('Save failed'); }); }
@@ -415,7 +461,7 @@ async function maybeBirthday(prof, uid){
   if(b.getMonth()!==now.getMonth() || b.getDate()!==now.getDate()) return;
   if(prof.bday_greeted===now.getFullYear()) return;
   const first=(prof.full_name||'there').split(' ')[0];
-  const body=`🎉 Happy Birthday, ${first}! Everyone at Done Right Cleaning is wishing you a wonderful day. We're so grateful to have you on the team — thank you for everything you do. Enjoy your day! 🎂`;
+  const body=`🎉 Happy Birthday, ${first}! Everyone at ${co().full} is wishing you a wonderful day. We're so grateful to have you on the team — thank you for everything you do. Enjoy your day! 🎂`;
   try{
     await sb.from('messages').insert({contractor_id:uid, sender:'admin', kind:'birthday', body});
     await sb.from('profiles').update({bday_greeted:now.getFullYear()}).eq('id',uid);
@@ -499,6 +545,7 @@ let adminWeek = 0;     // which week the admin scheduling board is viewing
 let adminTab = 'dashboard';   // 'dashboard' | 'invoices'
 let leadTab = 'home';         // team-lead portal: 'home' | 'guide'
 let recoveryMode = false;     // true while a user is resetting their password from an email link
+let adminCompany = 'drc';     // which company an admin is currently viewing ('drc' | 'tidyotter')
 let invFilter = 'unpaid';     // 'all' | 'unpaid' | 'paid'
 let session = loadSession();  // {role,name} or null when logged out
 let authMode = 'login';       // 'login' | 'signup'
@@ -675,8 +722,8 @@ function photoEntriesHtml(cid, canDelete){
 
 /* ---------- login / logout (demo of role-based access) ---------- */
 function login(r){   // demo / offline only
-  if(r==='admin'){ session={role:'admin',name:'DRC Office'}; adminTab='dashboard'; }
-  else { session={role:'contractor',name:state.me.name}; ctab='home'; }
+  if(r==='admin'){ session={role:'admin',name:'DRC Office',company:'drc'}; adminTab='dashboard'; }
+  else { session={role:'contractor',name:state.me.name,company:'drc'}; ctab='home'; }
   saveSession(); render();
 }
 async function tryLogin(){
@@ -731,12 +778,16 @@ function renderLogin(){
   document.getElementById('content').innerHTML=`
   <div class="loginwrap">
     <div class="loginbrand">
-      <div class="blogo">${CONFIG.COMPANY}</div>
-      <h2>${CONFIG.COMPANY} ${CONFIG.BRAND}</h2>
+      <div class="blogo">${co().name}</div>
+      <h2>${co().name} ${co().brand}</h2>
       <p>${signup?'Create your contractor account':'Sign in to your account'}</p>
     </div>
     ${signup?`
-      <div class="btnrow">
+      <label>Which company are you joining?</label>
+      <select id="suCompany" style="width:100%">
+        ${Object.keys(COMPANIES).map(k=>`<option value="${k}">${COMPANIES[k].full} (${COMPANIES[k].name})</option>`).join('')}
+      </select>
+      <div class="btnrow" style="margin-top:12px">
         <div style="flex:1"><label>First name</label><input id="suFirst" placeholder="First"></div>
         <div style="flex:1"><label>Last name</label><input id="suLast" placeholder="Last"></div>
       </div>
@@ -788,7 +839,7 @@ function renderReset(){
   document.getElementById('content').innerHTML=`
   <div class="loginwrap">
     <div class="loginbrand">
-      <div class="blogo">${CONFIG.COMPANY}</div>
+      <div class="blogo">${co().name}</div>
       <h2>Set a new password</h2>
       <p>Choose a new password for your account.</p>
     </div>
@@ -813,6 +864,7 @@ async function saveNewPassword(){
 }
 async function signUp(){
   const first=val('suFirst'), last=val('suLast'), bday=val('suBday'), phone=val('suPhone'), email=val('loginEmail'), pass=val('loginPass');
+  const companyEl=document.getElementById('suCompany'); const company=(companyEl&&COMPANIES[companyEl.value])?companyEl.value:'drc';
   if(!first||!last){ toast('Please enter your first and last name'); return; }
   if(!bday){ toast('Please add your birthday'); return; }
   if(!phone){ toast('Please add your mobile number'); return; }
@@ -820,7 +872,7 @@ async function signUp(){
   if(!ONLINE){ toast('Sign-up needs the live database'); return; }
   toast('Creating your account…');
   const { data, error } = await sb.auth.signUp({ email, password:pass,
-    options:{ data:{ full_name:(first+' '+last).trim(), birthday:bday, phone } } });
+    options:{ data:{ full_name:(first+' '+last).trim(), birthday:bday, phone, company } } });
   if(error){ toast('Sign-up failed: '+error.message); return; }
   if(data && data.session){          // email confirmation off → straight in
     const ok=await sbLoadAll(); if(ok){ ctab='home'; render(); startTutorial(); }
@@ -898,8 +950,8 @@ function setTab(t){ ctab=t; render(); }
 function render(){
   ensureAllWeeks();
   if(recoveryMode){ renderReset(); return; }
-  document.getElementById('logoTxt').textContent=CONFIG.COMPANY;
-  document.getElementById('brandTxt').textContent=CONFIG.BRAND;
+  document.getElementById('logoTxt').textContent=co().name;
+  document.getElementById('brandTxt').textContent=co().brand;
   const hr=document.getElementById('headerRight');
   if(!session){
     hr.innerHTML='';
@@ -1048,7 +1100,7 @@ function viewReview(){
     <div id="qrbox" style="display:flex;justify-content:center;padding:6px"></div>
     <p class="muted" style="margin:12px 0 0">Have the customer point their phone camera at the code.</p>
   </div>
-  <a class="btn primary" href="${CONFIG.REVIEW_URL}" target="_blank" rel="noopener" style="text-decoration:none">Open the review page</a>
+  <a class="btn primary" href="${co().reviewUrl}" target="_blank" rel="noopener" style="text-decoration:none">Open the review page</a>
 
   <h2 class="section">How to ask for a review</h2>
   <div class="card" style="background:#eaf2fb;border:1px solid #b6d4f0">
@@ -1074,7 +1126,7 @@ function buildQR(){
   const box=document.getElementById('qrbox'); if(!box) return;
   box.innerHTML='';
   if(window.QRCode){
-    new window.QRCode(box, { text:CONFIG.REVIEW_URL, width:236, height:236,
+    new window.QRCode(box, { text:co().reviewUrl, width:236, height:236,
       colorDark:'#045ea9', colorLight:'#ffffff', correctLevel:window.QRCode.CorrectLevel.M });
   } else {
     box.innerHTML='<div class="muted" style="padding:30px 10px">The QR code needs an internet connection to display. Use the button below to open the review page.</div>';
@@ -1090,7 +1142,7 @@ function viewHome(){
   <div class="card" style="background:#fff4e5;border:1px solid #f7c98b;margin-top:4px">
     <div style="font-weight:700;color:#92400e;font-size:14px">📋 Your schedule &amp; jobs are in Jobber — not here</div>
     <div style="font-size:12.5px;color:#7c4a12;margin-top:5px;line-height:1.5">
-      View your assigned jobs, your schedule, and <strong>clock in/out in the Jobber app</strong> (a separate app). This DRC Hub is only for your <strong>availability, extra assignments, invoices, reviews, and messages with the office.</strong>
+      View your assigned jobs, your schedule, and <strong>clock in/out in the Jobber app</strong> (a separate app). This app is only for your <strong>availability, extra assignments, invoices, reviews, and messages with the office.</strong>
     </div>
   </div>
   <button class="btn ghost" style="width:100%;margin-top:8px" onclick="showSupplyChecklist()">✅ Supply &amp; readiness checklist</button>
@@ -1266,7 +1318,7 @@ function submitInvoice(){
   toast('Invoice saved — opening your email to send ✓'); render();
 }
 function emailInvoice(inv){
-  if(!CONFIG.OFFICE_EMAIL) return;
+  if(!co().officeEmail) return;
   const subj=`Weekly invoice — ${inv.contractor} — ${inv.start} to ${inv.end}`;
   const body=
 `Contractor: ${inv.contractor}
@@ -1276,7 +1328,7 @@ Premium hours (short-notice): ${inv.premiumHours||0}
 Notes: ${inv.notes||'—'}
 
 (Submitted from the DRC Contractor Hub)`;
-  window.location.href=`mailto:${CONFIG.OFFICE_EMAIL}?subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(body)}`;
+  window.location.href=`mailto:${co().officeEmail}?subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(body)}`;
 }
 
 /* ---------- CHAT (AI bot + SMS support) ---------- */
@@ -1290,7 +1342,7 @@ function viewChat(){
         .map(q=>`<button onclick="faqAsk('${q}')">${q}</button>`).join('')}
     </div>
     <button class="btn red" style="margin-bottom:8px" onclick="textHuman()">
-      ${svg(ICON.chat)} Text a human (${CONFIG.SUPPORT_PHONE})</button>
+      ${svg(ICON.chat)} Text a human (${co().supportPhone})</button>
     <div class="chatinput">
       <input id="chatField" placeholder="Type a message…" onkeydown="if(event.key==='Enter')sendChat()">
       <button class="iconbtn" onclick="sendChat()">${svg(ICON.send)}</button>
@@ -1345,7 +1397,7 @@ function botReply(q){
   return "I'm not 100% sure on that one. For anything I can't answer — pay disputes, insurance, urgent issues — tap 'Text a human' below and someone from the DRC office will reply by SMS.";
 }
 function textHuman(){
-  const num=CONFIG.SUPPORT_PHONE.replace(/[^+\d]/g,'');
+  const num=co().supportPhone.replace(/[^+\d]/g,'');
   const body=encodeURIComponent(`Hi, this is ${state.me.name} (DRC contractor). I need help with: `);
   window.location.href=`sms:${num}?&body=${body}`;
   toast('Opening your messages app…');
@@ -1610,7 +1662,12 @@ function renderAdmin(){
              : adminTab==='assignments'   ? adminAssignmentsView()
              : adminTab==='leaderboard'   ? adminLeaderboardView()
              : adminDashboard();
-  c.innerHTML = body;
+  c.innerHTML = companyToggle() + body;
+}
+function companyToggle(){
+  return `<div class="btnrow" style="margin-bottom:12px;gap:8px;background:#eef2f7;padding:5px;border-radius:12px">
+    ${Object.keys(COMPANIES).map(k=>`<button class="btn ${adminCompany===k?'primary':'ghost'} sm" style="flex:1" onclick="setAdminCompany('${k}')">${COMPANIES[k].name}</button>`).join('')}
+  </div>`;
 }
 function adminDashboard(){
   return `
@@ -1837,7 +1894,7 @@ function emailPaySheet(){
     body+=`${g.name}: ${g.hours}h regular`+(g.prem?` + ${g.prem}h premium`:'')+(g.reviewBonus?` + $${g.reviewBonus.toFixed(2)} bonuses (reviews + paid lunch)`:'')+(g.tip?` + $${g.tip.toFixed(2)} tips`:'')+` over ${g.weeks} week${g.weeks>1?'s':''}`
        +(g.missing?' (rate not set)':` = $${g.total.toFixed(2)}`)+'\n'; });
   if(groups.length) body+=`\nTotal to pay out: $${grand.toFixed(2)}\n`;
-  window.location.href=`mailto:${CONFIG.OFFICE_EMAIL}?subject=${encodeURIComponent('DRC pay sheet — amounts owing')}&body=${encodeURIComponent(body)}`;
+  window.location.href=`mailto:${co().officeEmail}?subject=${encodeURIComponent(co().name+' pay sheet — amounts owing')}&body=${encodeURIComponent(body)}`;
 }
 function setAdminWeek(i){ adminWeek=i; render(); }
 function adminTeamView(){
@@ -2433,7 +2490,7 @@ async function adminSend(){
   if(ONLINE){
     const { error } = await sb.from('messages').insert({contractor_id:activeAdminChat,sender:'admin',kind:'chat',body:t});
     if(error){ toast('Send failed: '+error.message); return; }
-    queueSms(activeAdminChat, 'You have a new message in the DRC Hub. Open the app to read it. (No-reply)', 'message');
+    queueSms(activeAdminChat, 'You have a new message in the '+co().name+' Hub. Open the app to read it. (No-reply)', 'message');
     await sbRefresh(); scrollChat(); toast('Message sent to contractor');
   } else {
     let ch=state.adminChats.find(c=>c.id===activeAdminChat);
