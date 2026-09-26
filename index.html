@@ -350,12 +350,13 @@ async function sbLoadAll(){
   if(prof.status==='Removed'){ await sb.auth.signOut(); session=null;
     toast('Your account has been deactivated — please contact the office.'); return false; }
   const isAdmin = prof.role === 'admin';
-  const isLead  = prof.role === 'team_lead';   // team leads: contact list + guide only
-  const isStaff = isAdmin || isLead;           // both can see the full contractor list
-  session = { role:prof.role, name:prof.full_name||user.email, id:user.id, company:(prof.company||'drc') };
+  const isLead  = prof.role === 'team_lead';       // team leads: contact list + guide only
+  const isFS    = prof.role === 'field_supervisor'; // field supervisors: 60-day tracker
+  const isStaff = isAdmin || isLead || isFS;       // all can see the full contractor list
+  session = { role:prof.role, name:prof.full_name||user.email, id:user.id, company:(prof.company||'drc'), hybrid:!!prof.hybrid };
   const _nm=(prof.full_name||'').trim();
   session.needsName = !_nm || _nm.includes('@');   // treat an email-as-name as "no name yet"
-  state.me = { id:user.id, name:prof.full_name||user.email, initials:initialsOf(prof.full_name||user.email), company:(prof.company||'drc') };
+  state.me = { id:user.id, name:prof.full_name||user.email, initials:initialsOf(prof.full_name||user.email), company:(prof.company||'drc'), hybrid:!!prof.hybrid };
   chatReadAt = prof.chat_read_at ? new Date(prof.chat_read_at).getTime() : 0;
   if(isAdmin && !COMPANIES[adminCompany]) adminCompany='drc';
 
@@ -368,14 +369,14 @@ async function sbLoadAll(){
     locked:!!p.avail_locked, lockedTemplate:p.avail_template||null, hourly_rate:p.hourly_rate,
     score:(p.score==null?6:p.score), email:p.email, phone:p.phone, birthday:p.birthday, checkins:p.checkins||{}, firstJob:p.first_job,
     pendingReviews:p.pending_reviews||[], pendingTips:p.pending_tips||[], pendingLunches:p.pending_lunches||[], strikes:p.strikes||[], avatarUrl:p.avatar_url||'',
-    company:(p.company||'drc')
+    company:(p.company||'drc'), hybrid:!!p.hybrid, createdAt:p.created_at, fsBonusPaid:!!p.fs_bonus_paid
   }));
   state.allTeam = isAdmin ? allProfs.map((p,i)=>({
     id:p.id, name:p.full_name||'(no name)', role:p.role, status:p.status||'Active',
     initials:initialsOf(p.full_name||'?'), cls:CLS[i%CLS.length], rate:p.hourly_rate,
     score:(p.score==null?6:p.score), email:p.email, phone:p.phone, birthday:p.birthday, zones:p.zones||[], checkins:p.checkins||{}, firstJob:p.first_job,
     pendingReviews:p.pending_reviews||[], pendingTips:p.pending_tips||[], pendingLunches:p.pending_lunches||[], strikes:p.strikes||[], avatarUrl:p.avatar_url||'',
-    company:(p.company||'drc')
+    company:(p.company||'drc'), hybrid:!!p.hybrid, createdAt:p.created_at, fsBonusPaid:!!p.fs_bonus_paid
   })) : null;
 
   // contractor-only auto messages (run before we fetch messages so they appear immediately)
@@ -404,6 +405,11 @@ async function sbLoadAll(){
     client:r.client,address:r.address,jobDate:r.job_date,note:r.note,
     beforeUrl:r.before_url,afterUrl:r.after_url,createdAt:r.created_at}));
 
+  const sh = (await sb.from('shifts').select('*').order('job_date',{ascending:true})).data || [];
+  state.allShifts = sh.map(s=>({id:s.id,contractorId:s.contractor_id,company:s.company||'drc',
+    client:s.client,address:s.address,jobDate:s.job_date,startTime:s.start_time,endTime:s.end_time,
+    notes:s.notes,clockIn:s.clock_in,clockOut:s.clock_out}));
+
   const msgs = (await sb.from('messages').select('*').order('created_at')).data || [];
   if(isAdmin){
     const byC = {};
@@ -431,8 +437,11 @@ async function sbLoadAll(){
 }
 // re-derive the working lists from the master lists for the active company
 function applyCompanyScope(){
-  const cmp = (session && session.role==='admin') ? adminCompany : ((session && session.company) || 'drc');
-  if(state.allContractors) state.contractors = state.allContractors.filter(c=>(c.company||'drc')===cmp);
+  const role = session && session.role;
+  const cmp = role==='admin' ? adminCompany
+            : role==='field_supervisor' ? null   // field supervisors see all contractors, both companies
+            : ((session && session.company) || 'drc');
+  if(state.allContractors) state.contractors = cmp ? state.allContractors.filter(c=>(c.company||'drc')===cmp) : state.allContractors.slice();
   const ids = new Set((state.contractors||[]).map(c=>c.id));
   if(state.allTeam) state.team = state.allTeam.filter(m=> m.role==='admin' || (m.company||'drc')===cmp);
   if(state.allInvoices)  state.invoices      = state.allInvoices.filter(i=>ids.has(i.contractorId));
@@ -577,6 +586,7 @@ const ICON = {
   chat:'<path d="M21 12a8 8 0 01-11.6 7.1L4 20l1-4.4A8 8 0 1121 12z"/>',
   more:'<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>',
   plus:'<path d="M12 5v14M5 12h14"/>',
+  clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
   team:'<circle cx="9" cy="8" r="3"/><path d="M3 20v-1a5 5 0 015-5h2a5 5 0 015 5v1"/><path d="M16 3.5a3 3 0 010 5.8M21 20v-1a5 5 0 00-3.5-4.8"/>',
   trophy:'<path d="M7 4h10v3a5 5 0 01-10 0zM7 4H4v2a3 3 0 003 3M17 4h3v2a3 3 0 01-3 3M9 20h6M10 15v3M14 15v3"/>',
   bell:'<path d="M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 01-3.4 0"/>',
@@ -962,6 +972,7 @@ function render(){
   hr.innerHTML=`<div class="hdruser"><span onclick="openNameSetup()" style="cursor:pointer" title="Edit your name">${session.name}</span><button class="logoutbtn" onclick="logout()">Log out</button></div>`;
   if(role==='contractor'){ renderContractor(); renderTabbar(); }
   else if(role==='team_lead'){ renderLead(); renderLeadTabbar(); }
+  else if(role==='field_supervisor'){ renderFS(); renderFSTabbar(); }
   else { renderAdmin(); renderAdminTabbar(); }
   DB.save();
 }
@@ -1005,8 +1016,9 @@ function openAdminMore(){
 function renderTabbar(){
   const pend = state.premiumOffers.filter(o=>o.status==='pending').length;
   const cunread = chatUnread();
-  const tabs=[['home','Home',ICON.home],['jobs','Jobs',ICON.jobs],
-    ['invoices','Invoices',ICON.invoice],['review','Review',ICON.qr],['chat','Chat',ICON.chat],['more','Guide',ICON.more]];
+  const tabs=[['home','Home',ICON.home]];
+  if(session && session.hybrid) tabs.push(['schedule','Schedule',ICON.clock]);
+  tabs.push(['jobs','Jobs',ICON.jobs],['invoices','Invoices',ICON.invoice],['review','Review',ICON.qr],['chat','Chat',ICON.chat],['more','Guide',ICON.more]);
   document.getElementById('tabbar').innerHTML=tabs.map(([id,lbl,ic])=>
     `<button class="${ctab===id?'on':''}" onclick="setTab('${id}')">
        ${svg(ic)}<span>${lbl}</span>
@@ -1018,6 +1030,169 @@ function renderTabbar(){
 /* ============================================================
    CONTRACTOR VIEWS
    ============================================================ */
+/* ---------- hybrid contractors (combined DRC + Tidy Otter schedule + in-app clock in/out) ---------- */
+function fmtClock(iso){ if(!iso) return ''; try{ return new Date(iso).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}); }catch(e){ return ''; } }
+function shiftHours(s){ if(!s.clockIn||!s.clockOut) return null; const h=(new Date(s.clockOut)-new Date(s.clockIn))/3600000; return h>0?h:null; }
+function coBadge(company){ const co=COMPANIES[company]||COMPANIES.drc; return `<span class="pill ${company==='tidyotter'?'amber':'blue'}">${co.name}</span>`; }
+// ----- contractor side -----
+function viewSchedule(){
+  const mine=(state.allShifts||[]).filter(s=>s.contractorId===state.me.id)
+    .sort((a,b)=>String(a.jobDate).localeCompare(String(b.jobDate)) || String(a.startTime||'').localeCompare(String(b.startTime||'')));
+  return `
+  <div class="notice">🕑 You're a <strong>hybrid contractor</strong> right now — your DRC <em>and</em> Tidy Otter jobs are scheduled here. <strong>Clock in and out on each job in this app</strong> (not in Jobber).</div>
+  <h2 class="section">Your schedule</h2>
+  ${mine.length?mine.map(shiftCard).join(''):`<div class="card muted">No jobs scheduled yet — the office will add them here.</div>`}
+  `;
+}
+function shiftCard(s){
+  const hrs=shiftHours(s);
+  const st = !s.clockIn ? 'not_started' : (!s.clockOut ? 'working' : 'done');
+  return `<div class="card">
+    <div class="spread"><h3 style="font-size:15px;margin:0">${s.client||'Job'}</h3>${coBadge(s.company)}</div>
+    <div class="muted" style="font-size:13px;margin-top:3px">${s.jobDate?fmtDate(s.jobDate):''}${s.startTime?` · ${s.startTime}${s.endTime?'–'+s.endTime:''}`:''}</div>
+    ${s.address?`<div class="muted" style="font-size:12px">${s.address}</div>`:''}
+    ${s.notes?`<div class="muted" style="font-size:12px;margin-top:4px">📝 ${s.notes}</div>`:''}
+    <div style="margin-top:10px">
+      ${st==='not_started'?`<button class="btn green" style="width:100%" onclick="clockIn('${s.id}')">Clock in</button>`:''}
+      ${st==='working'?`<div class="spread"><span class="pill green">Clocked in at ${fmtClock(s.clockIn)}</span><button class="btn red sm" onclick="clockOut('${s.id}')">Clock out</button></div>`:''}
+      ${st==='done'?`<div class="muted" style="font-size:13px">✓ ${fmtClock(s.clockIn)}–${fmtClock(s.clockOut)} · <strong>${hrs?hrs.toFixed(2):'0.00'} hrs</strong></div>`:''}
+    </div>
+  </div>`;
+}
+async function clockIn(id){
+  const s=(state.allShifts||[]).find(x=>x.id===id); if(!s)return;
+  s.clockIn=new Date().toISOString();
+  if(ONLINE){ const {error}=await sb.from('shifts').update({clock_in:s.clockIn}).eq('id',id); if(error){ s.clockIn=null; toast('Clock-in failed: '+error.message); return; } }
+  toast('Clocked in ✓'); render();
+}
+async function clockOut(id){
+  const s=(state.allShifts||[]).find(x=>x.id===id); if(!s)return;
+  if(!s.clockIn){ toast('Clock in first'); return; }
+  s.clockOut=new Date().toISOString();
+  if(ONLINE){ const {error}=await sb.from('shifts').update({clock_out:s.clockOut}).eq('id',id); if(error){ s.clockOut=null; toast('Clock-out failed: '+error.message); return; } }
+  toast('Clocked out ✓'); render();
+}
+// ----- admin side -----
+async function setHybrid(id, val){
+  const m=(state.team||[]).find(x=>x.id===id)||(state.contractors||[]).find(x=>x.id===id); if(!m)return;
+  if(ONLINE){ const {error}=await sb.from('profiles').update({hybrid:val}).eq('id',id); if(error){ toast('Failed: '+error.message); return; } await sbRefresh(); }
+  else { m.hybrid=val; render(); }
+  toast(val?'Now a hybrid contractor ✓':'Hybrid access removed');
+}
+function adminShiftList(cid){
+  const list=(state.allShifts||[]).filter(s=>s.contractorId===cid)
+    .sort((a,b)=>String(b.jobDate).localeCompare(String(a.jobDate)));
+  if(!list.length) return `<div class="card muted">No jobs scheduled yet.</div>`;
+  return list.map(s=>{ const hrs=shiftHours(s);
+    return `<div class="card"><div class="spread"><strong style="font-size:14px">${s.client||'Job'}</strong>${coBadge(s.company)}</div>
+      <div class="muted" style="font-size:12px">${s.jobDate?fmtDate(s.jobDate):''}${s.startTime?` · ${s.startTime}${s.endTime?'–'+s.endTime:''}`:''}${s.address?` · ${s.address}`:''}</div>
+      <div class="muted" style="font-size:12px;margin-top:4px">${s.clockIn?`Clocked in ${fmtClock(s.clockIn)}${s.clockOut?`–${fmtClock(s.clockOut)} · <strong>${hrs?hrs.toFixed(2):'0.00'} hrs</strong>`:' · still on the clock'}`:'Not clocked in yet'}</div>
+      <button class="btn ghost sm" style="width:100%;margin-top:8px;color:var(--red)" onclick="deleteShift('${s.id}')">Delete job</button>
+    </div>`;}).join('');
+}
+function openShiftEntry(cid){
+  sheet(`
+    <button class="closex" onclick="closeSheet()">×</button>
+    <h3>Schedule a job</h3>
+    <label>Company</label>
+    <select id="shCompany" style="width:100%">${Object.keys(COMPANIES).map(k=>`<option value="${k}">${COMPANIES[k].name}</option>`).join('')}</select>
+    <label>Client / job</label><input id="shClient" placeholder="e.g. Hampton Inn — lobby">
+    <label>Address</label><input id="shAddr" placeholder="Street, neighbourhood">
+    <label>Date</label><input id="shDate" type="date" value="${isoDate(new Date())}">
+    <div class="btnrow"><div style="flex:1"><label>Start</label><input id="shStart" type="time"></div><div style="flex:1"><label>End</label><input id="shEnd" type="time"></div></div>
+    <label>Notes</label><input id="shNotes" placeholder="optional">
+    <button class="btn primary" style="margin-top:14px" onclick="saveShift('${cid}')">Add to schedule</button>
+  `);
+}
+async function saveShift(cid){
+  const cel=document.getElementById('shCompany'); const company=(cel&&COMPANIES[cel.value])?cel.value:'drc';
+  const client=val('shClient'), address=val('shAddr'), date=val('shDate'), start=val('shStart'), end=val('shEnd'), notes=val('shNotes');
+  if(!client||!date){ toast('Add at least a client and date'); return; }
+  const rec={id:'s'+Date.now(),contractorId:cid,company,client,address,jobDate:date,startTime:start,endTime:end,notes,clockIn:null,clockOut:null};
+  if(ONLINE){ const {data,error}=await sb.from('shifts').insert({contractor_id:cid,company,client,address,job_date:date,start_time:start,end_time:end,notes}).select().single();
+    if(error){ toast('Failed: '+error.message); return; } rec.id=data.id; }
+  (state.allShifts=state.allShifts||[]).push(rec);
+  closeSheet(); toast('Job scheduled ✓'); render();
+}
+async function deleteShift(id){
+  if(!confirm('Delete this scheduled job?')) return;
+  if(ONLINE){ const {error}=await sb.from('shifts').delete().eq('id',id); if(error){ toast('Failed: '+error.message); return; } }
+  state.allShifts=(state.allShifts||[]).filter(s=>s.id!==id);
+  toast('Deleted'); render();
+}
+function roleLabel(r){ return r==='admin'?'Admin':(r==='team_lead'?'Team lead':(r==='field_supervisor'?'Field supervisor':'Contractor')); }
+function rolePill(r){ const cls=r==='admin'?'blue':(r==='team_lead'?'amber':(r==='field_supervisor'?'green':'gray')); return `<span class="pill ${cls}">${roleLabel(r)}</span>`; }
+/* ---------- tenure / 60-day milestone helpers ---------- */
+function contractorStart(c){ return c.firstJob || (c.createdAt ? String(c.createdAt).slice(0,10) : null); }
+function daysEmployed(c){ const s=contractorStart(c); if(!s) return null; const d=Math.floor((Date.now()-new Date(s+'T00:00:00').getTime())/86400000); return d>=0?d:0; }
+function reached60(c){ const d=daysEmployed(c); return d!=null && d>=60; }
+function fsBonusOwed(c){ return reached60(c) && !c.fsBonusPaid; }
+
+/* ---------- field supervisor portal (2 tabs: Home + Guide) ---------- */
+function setFSTab(t){ leadTab=t; render(); }
+function renderFSTabbar(){
+  const tabs=[['home','Contractors',ICON.team],['guide','Guide',ICON.more]];
+  document.getElementById('tabbar').innerHTML=tabs.map(([id,lbl,ic])=>
+    `<button class="${leadTab===id?'on':''}" onclick="setFSTab('${id}')">${svg(ic)}<span>${lbl}</span></button>`).join('');
+}
+function renderFS(){
+  const c=document.getElementById('content');
+  if(leadTab==='guide'){ c.innerHTML=viewMore(); }
+  else { c.innerHTML=viewFSHome(); }
+}
+function fsContractorCard(c){
+  const d=daysEmployed(c); const owed=fsBonusOwed(c); const hit=reached60(c);
+  const search=(c.name+' '+((c.zones||[]).join(' '))).toLowerCase();
+  const toGo = d!=null ? 60-d : null;
+  const status = d==null ? `<span class="pill gray">No start date</span>`
+    : owed ? `<span class="pill amber">🎉 60 days — bonus owed</span>`
+    : hit  ? `<span class="pill green">60+ days ✓</span>`
+    : (toGo<=7 ? `<span class="pill blue">${toGo} day${toGo===1?'':'s'} to 60</span>` : `<span class="pill gray">Day ${d}</span>`);
+  return `<div class="card fsrow" data-search="${search}">
+    <div class="spread"><div class="row">${avatarHtml(c,40)}
+      <div style="min-width:0"><h3 style="font-size:15px;margin:0">${c.name}</h3>
+        <div class="muted" style="font-size:12px">${contractorStart(c)?('Started '+fmtDate(contractorStart(c))+(d!=null?` · ${d} days`:'')):'Start date not set'}</div></div></div>
+      ${status}</div>
+    ${c.phone?`<div class="btnrow" style="margin-top:10px">
+      <button class="btn ghost sm" style="flex:1" onclick="location.href='tel:${c.phone}'">📞 Call</button>
+      <button class="btn ghost sm" style="flex:1" onclick="location.href='sms:${c.phone}'">💬 Text</button></div>`:''}
+  </div>`;
+}
+function filterFSList(){
+  const box=document.getElementById('fsSearch'); if(!box) return;
+  const q=box.value.trim().toLowerCase(); let shown=0;
+  document.querySelectorAll('#fsList .fsrow').forEach(el=>{ const hit=!q||(el.dataset.search||'').includes(q); el.style.display=hit?'':'none'; if(hit)shown++; });
+  const none=document.getElementById('fsNone'); if(none) none.style.display=(q&&shown===0)?'':'none';
+}
+function viewFSHome(){
+  const all=(state.contractors||[]).filter(c=>(c.status||'Active')!=='Removed');
+  const owed=all.filter(fsBonusOwed);
+  const sorted=all.slice().sort((a,b)=>{
+    const ao=fsBonusOwed(a)?0:(reached60(a)?2:1), bo=fsBonusOwed(b)?0:(reached60(b)?2:1);
+    if(ao!==bo) return ao-bo;
+    return (daysEmployed(b)||0)-(daysEmployed(a)||0);
+  });
+  return `
+  <h2 class="section">Field Supervisor</h2>
+  <div class="notice">Track every contractor's tenure. When someone reaches <strong>60 days</strong>, a <strong>Field Supervisor bonus is owed to you</strong> — the office is emailed automatically to add it to your next pay.</div>
+  ${owed.length?`<div class="card" style="background:#fffbeb;border:1px solid #fde68a">
+    <strong style="color:#92400e">🎉 ${owed.length} contractor${owed.length>1?'s have':' has'} hit 60 days — bonus owed</strong>
+    <div class="muted" style="font-size:12px;margin-top:4px">${owed.map(c=>c.name).join(', ')}</div>
+  </div>`:''}
+  <h2 class="section">Contractors (${all.length})</h2>
+  ${all.length>6?`<input id="fsSearch" placeholder="Search by name or zone…" oninput="filterFSList()" style="width:100%;margin-bottom:12px">`:''}
+  <div id="fsList">${sorted.length?sorted.map(fsContractorCard).join(''):'<div class="card muted">No contractors yet.</div>'}</div>
+  <div id="fsNone" class="card muted" style="display:none">No matches.</div>
+  `;
+}
+async function markFsBonusPaid(id, val){
+  const m=(state.team||[]).find(x=>x.id===id)||(state.contractors||[]).find(x=>x.id===id); if(!m)return;
+  const t=(state.allTeam||[]).find(x=>x.id===id); if(t) t.fsBonusPaid=val;
+  const a=(state.allContractors||[]).find(x=>x.id===id); if(a) a.fsBonusPaid=val;
+  m.fsBonusPaid=val;
+  if(ONLINE){ const {error}=await sb.from('profiles').update({fs_bonus_paid:val}).eq('id',id); if(error){ toast('Failed: '+error.message); return; } }
+  toast(val?'Marked FS bonus paid ✓':'FS bonus reopened'); render();
+}
 /* ---------- team lead portal (2 tabs: Home + Guide) ---------- */
 function setLeadTab(t){ leadTab=t; render(); }
 function renderLeadTabbar(){
@@ -1068,6 +1243,7 @@ function viewLeadHome(){
 function renderContractor(){
   const c=document.getElementById('content');
   if(ctab==='home'){ c.innerHTML=viewHome(); maybeShowSupplyChecklist(); }
+  else if(ctab==='schedule') c.innerHTML=viewSchedule();
   else if(ctab==='jobs') c.innerHTML=viewJobs();
   else if(ctab==='invoices') c.innerHTML=viewInvoices();
   else if(ctab==='review'){ c.innerHTML=viewReview(); buildQR(); }
@@ -1139,12 +1315,19 @@ function viewHome(){
   const ws=weekStarts()[0]; const wk=me.avail[ws]||{};
   const days=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].filter(d=>wk[d]).join(', ')||'none set';
   return `
+  ${(session&&session.hybrid)?`
+  <div class="card" style="background:#eaf2fb;border:1px solid #b6d4f0;margin-top:4px">
+    <div style="font-weight:700;color:#045ea9;font-size:14px">🕑 You're a hybrid contractor</div>
+    <div style="font-size:12.5px;color:#0c447c;margin-top:5px;line-height:1.5">
+      Your DRC and Tidy Otter jobs are on the <strong>Schedule</strong> tab — <strong>clock in and out there</strong> (not in Jobber). Availability, invoices, reviews and messages all still work here as usual.
+    </div>
+  </div>`:`
   <div class="card" style="background:#fff4e5;border:1px solid #f7c98b;margin-top:4px">
     <div style="font-weight:700;color:#92400e;font-size:14px">📋 Your schedule &amp; jobs are in Jobber — not here</div>
     <div style="font-size:12.5px;color:#7c4a12;margin-top:5px;line-height:1.5">
       View your assigned jobs, your schedule, and <strong>clock in/out in the Jobber app</strong> (a separate app). This app is only for your <strong>availability, extra assignments, invoices, reviews, and messages with the office.</strong>
     </div>
-  </div>
+  </div>`}
   <button class="btn ghost" style="width:100%;margin-top:8px" onclick="showSupplyChecklist()">✅ Supply &amp; readiness checklist</button>
 
   <h2 class="section">Welcome back</h2>
@@ -1909,7 +2092,7 @@ function adminTeamView(){
       <div class="row">${avatarHtml(m,44)}
         <div><h3 style="font-size:15px;margin:0">${m.name}</h3>
           <div class="row" style="gap:6px;margin-top:3px">
-            <span class="pill ${m.role==='admin'?'blue':(m.role==='team_lead'?'amber':'gray')}">${m.role==='admin'?'Admin':(m.role==='team_lead'?'Team lead':'Contractor')}</span>
+            ${rolePill(m.role)}
             ${(m.role||'contractor')==='contractor'?`<span class="pill ${scoreCls(m.score)}">${m.score??6}/10</span>`:''}
             ${m.rate!=null?`<span class="muted" style="font-size:12px">$${Number(m.rate).toFixed(2)}/hr</span>`:''}
             ${(m.strikes&&m.strikes.length)?`<span onclick="event.stopPropagation();showStrikes('${m.id}')" title="View strikes" style="cursor:pointer;color:var(--red);font-weight:800;letter-spacing:1px">${'✕'.repeat(Math.min(m.strikes.length,3))}</span>`:''}
@@ -1991,7 +2174,7 @@ function adminProfileView(id){
   <div class="card" style="margin-top:10px">
     <div class="row">${avatarHtml(m,48)}
       <div><h3 style="margin:0">${m.name}</h3>
-        <span class="pill ${m.role==='admin'?'blue':(m.role==='team_lead'?'amber':'gray')}">${m.role==='admin'?'Admin':(m.role==='team_lead'?'Team lead':'Contractor')}</span></div></div>
+        ${rolePill(m.role)}</div></div>
     <div class="divider"></div>
     <table style="width:100%;font-size:14px">
       <tr><td class="muted" style="padding:5px 0">Email</td><td style="text-align:right">${m.email||'—'}</td></tr>
@@ -2002,6 +2185,16 @@ function adminProfileView(id){
     </table>
   </div>
   ${isContractor?`
+  <h2 class="section">Tenure</h2>
+  <div class="card">
+    <div class="spread"><span class="muted" style="font-size:13px">Days employed${contractorStart(m)?` (since ${fmtDate(contractorStart(m))})`:''}</span>
+      <strong>${daysEmployed(m)!=null?daysEmployed(m)+' days':'— set first job date'}</strong></div>
+    <div class="spread" style="margin-top:8px"><span class="muted" style="font-size:13px">60-day milestone</span>
+      ${reached60(m)?`<span class="pill green">Reached ✓</span>`:(daysEmployed(m)!=null?`<span class="pill gray">${Math.max(0,60-daysEmployed(m))} days to go</span>`:`<span class="pill gray">—</span>`)}</div>
+    ${fsBonusOwed(m)?`<div class="notice" style="margin-top:10px;background:var(--amber-bg);border-color:#fde68a;color:#92400e">🎉 60-day mark reached — <strong>Field Supervisor bonus owed.</strong> The office is emailed automatically at the milestone. Mark it paid once it's added to the FS's pay.</div>
+    <button class="btn primary sm" style="width:100%;margin-top:8px" onclick="markFsBonusPaid('${m.id}',true)">Mark FS bonus paid</button>`:''}
+    ${(reached60(m)&&m.fsBonusPaid)?`<div class="spread" style="margin-top:8px"><span class="muted" style="font-size:13px">Field Supervisor bonus</span><span class="row" style="gap:8px"><span class="pill green">Paid ✓</span><a href="#" onclick="markFsBonusPaid('${m.id}',false);return false" style="color:var(--muted);font-size:12px">undo</a></span></div>`:''}
+  </div>
   <h2 class="section">Strikes ${(m.strikes||[]).length>=3?'<span class="pill red">On thin ice</span>':''}</h2>
   <div class="card">
     <div class="spread">
@@ -2087,6 +2280,12 @@ function adminProfileView(id){
   </div>
   <h2 class="section">Job photos</h2>
   ${photoEntriesHtml(m.id, false)}
+  ${m.hybrid?`
+  <h2 class="section">Hybrid schedule</h2>
+  <div class="notice">${m.name.split(' ')[0]} is a <strong>hybrid contractor</strong> — build their combined DRC + Tidy Otter schedule here. They clock in/out on each job in the app; hours are recorded below.</div>
+  <button class="btn primary" onclick="openShiftEntry('${m.id}')">${svg(ICON.plus)} Schedule a job</button>
+  <div style="margin-top:12px">${adminShiftList(m.id)}</div>
+  `:''}
   <h2 class="section">Check-in cadence</h2>
   <div class="card">
     <div class="spread"><span class="muted" style="font-size:13px">First job date</span>
@@ -2110,12 +2309,14 @@ function adminProfileView(id){
     <button class="btn ${(!k.monthlyLast||overdue(k.monthlyLast))?'primary':'ghost'}" style="margin-top:10px" onclick="markMonthly('${id}')">Mark monthly check-in done today</button>
   </div>`:''}
   ${self?'':`<h2 class="section">Manage</h2>
-  <div class="muted" style="font-size:12px;margin:-4px 0 8px">Current role: <strong>${m.role==='admin'?'Admin':(m.role==='team_lead'?'Team lead':'Contractor')}</strong></div>
+  <div class="muted" style="font-size:12px;margin:-4px 0 8px">Current role: <strong>${roleLabel(m.role)}</strong></div>
   <div class="btnrow" style="flex-wrap:wrap;gap:8px">
     ${m.role!=='contractor'?`<button class="btn ghost sm" onclick="setRole('${m.id}','contractor')">Make contractor</button>`:''}
     ${m.role!=='team_lead'?`<button class="btn ghost sm" onclick="setRole('${m.id}','team_lead')">Make team lead</button>`:''}
+    ${m.role!=='field_supervisor'?`<button class="btn ghost sm" onclick="setRole('${m.id}','field_supervisor')">Make field supervisor</button>`:''}
     ${m.role!=='admin'?`<button class="btn ghost sm" onclick="setRole('${m.id}','admin')">Make admin</button>`:''}
   </div>
+  ${(m.role||'contractor')==='contractor'?`<button class="btn ${m.hybrid?'ghost':'primary'} sm" style="width:100%;margin-top:8px" onclick="setHybrid('${m.id}',${m.hybrid?'false':'true'})">${m.hybrid?'🕑 Remove hybrid access':'🕑 Make hybrid (temporary DRC + Tidy Otter schedule)'}</button>`:''}
   <button class="btn red" style="width:100%;margin-top:10px" onclick="removeUser('${m.id}')">Remove</button>`}
   `;
 }
