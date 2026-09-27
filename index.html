@@ -395,7 +395,8 @@ async function sbLoadAll(){
     start:i.week_start,end:i.week_end,hours:Number(i.hours)||0,premiumHours:Number(i.premium_hours)||0,
     notes:i.notes||'',paid:!!i.paid,status:i.paid?'Paid':'Submitted',
     bonus:Number(i.bonus)||0,bonusNote:i.bonus_note||'',tipLog:i.tip_log||[],lunchLog:i.lunch_log||[],
-    reviewLog:i.review_log||[],reviewCount:(i.review_log||[]).length,milestone:Number(i.milestone)||0}));
+    reviewLog:i.review_log||[],reviewCount:(i.review_log||[]).length,milestone:Number(i.milestone)||0,
+    custom:!!i.custom, amount:Number(i.amount)||0, fileUrl:i.file_url||''}));
 
   const inc = (await sb.from('incidents').select('*').order('created_at',{ascending:false})).data || [];
   state.incidents = inc.map(r=>({id:r.id,type:r.type,where:r.where_text,date:r.occurred_on,desc:r.description}));
@@ -623,6 +624,13 @@ function compressImage(file, maxDim, quality){
 }
 async function uploadImage(path, blob){
   const { error } = await sb.storage.from(CONFIG.PHOTO_BUCKET).upload(path, blob, {upsert:true, contentType:'image/jpeg'});
+  if(error) throw error;
+  const { data } = sb.storage.from(CONFIG.PHOTO_BUCKET).getPublicUrl(path);
+  return data.publicUrl;
+}
+// upload any file (PDF, image, etc.) as-is and return its public URL
+async function uploadFile(path, file){
+  const { error } = await sb.storage.from(CONFIG.PHOTO_BUCKET).upload(path, file, {upsert:true, contentType:file.type||'application/octet-stream'});
   if(error) throw error;
   const { data } = sb.storage.from(CONFIG.PHOTO_BUCKET).getPublicUrl(path);
   return data.publicUrl;
@@ -1421,8 +1429,69 @@ function viewInvoices(){
     <button class="btn primary" style="margin-top:14px" onclick="submitInvoice()">Submit weekly invoice</button>
   </div>
   <p class="muted" style="text-align:center">⏰ Invoices must be submitted by midnight on Sundays, or processing may be delayed.</p>
+
+  <h2 class="section">Prefer your own invoice?</h2>
+  <div class="card">
+    <div class="muted" style="font-size:13px;margin-bottom:8px">If you invoice in your own format, submit it here instead — enter the total and attach your file. It's added to payroll the same way.</div>
+    <button class="btn ghost" style="width:100%" onclick="openOwnInvoice()">${svg('<path d="M12 5v14M5 12h14"/>')} Submit your own invoice</button>
+  </div>
+
   ${earningsSection()}
   `;
+}
+let ownInvoiceFile=null;
+function openOwnInvoice(){
+  ownInvoiceFile=null;
+  sheet(`
+    <button class="closex" onclick="closeSheet()">×</button>
+    <h3>Submit your own invoice</h3>
+    <label>Week start (Monday)</label><input id="oiStart" type="date">
+    <label>Week end (Sunday)</label><input id="oiEnd" type="date">
+    <label>Total amount you're invoicing ($)</label><input id="oiAmount" type="number" inputmode="decimal" step="0.01" placeholder="e.g. 640.00">
+    <label>Notes (optional)</label><input id="oiNotes" placeholder="anything the office should know">
+    <label>Attach your invoice (optional — PDF or photo)</label>
+    <button class="btn ghost sm" id="oiFileBtn" style="width:100%" onclick="pickOwnInvoiceFile()">Choose file…</button>
+    <button class="btn primary" style="margin-top:16px" onclick="submitOwnInvoice()">Submit invoice</button>
+  `);
+}
+function pickOwnInvoiceFile(){
+  if(!ONLINE){ toast('File upload needs the live app'); return; }
+  const inp=document.createElement('input'); inp.type='file'; inp.accept='image/*,application/pdf';
+  inp.onchange=()=>{ const f=inp.files&&inp.files[0]; if(f){ ownInvoiceFile=f; const b=document.getElementById('oiFileBtn'); if(b) b.textContent='✓ '+f.name; } };
+  inp.click();
+}
+async function submitOwnInvoice(){
+  const start=val('oiStart'), end=val('oiEnd'), amount=parseFloat(val('oiAmount')), notes=val('oiNotes');
+  if(!start||!end){ toast('Add the week range'); return; }
+  if(isNaN(amount)||amount<=0){ toast('Enter the invoice amount'); return; }
+  const me=state.contractors.find(x=>x.id===state.me.id);
+  const pending=(me&&me.pendingReviews||[]).slice();
+  const pendingTips=(me&&me.pendingTips||[]).slice();
+  const pendingLunches=(me&&me.pendingLunches||[]).slice();
+  const tipSum=pendingTips.reduce((s,t)=>s+Number(t.amount||0),0);
+  let fileUrl='';
+  try{
+    if(ONLINE && ownInvoiceFile){ toast('Uploading…'); fileUrl=await uploadFile('invoices/'+state.me.id+'/'+Date.now()+'-'+(ownInvoiceFile.name||'invoice'), ownInvoiceFile); }
+  }catch(e){ console.error(e); toast('File upload failed — submitting without it'); }
+  const inv={id:'i'+Date.now(),contractorId:state.me.id,contractor:me?me.name:'',
+    start,end,hours:0,premiumHours:0,notes,submittedAt:new Date().toISOString(),paid:false,status:'Submitted',
+    custom:true, amount, fileUrl,
+    reviewLog:pending, reviewCount:pending.length, tipLog:pendingTips, lunchLog:pendingLunches, bonus:tipSum};
+  state.invoices.push(inv); if(state.allInvoices) state.allInvoices.push(inv);
+  if(me){ me.pendingReviews=[]; me.pendingTips=[]; me.pendingLunches=[]; }
+  if(ONLINE){
+    const { data, error } = await sb.from('invoices').insert({contractor_id:state.me.id,contractor_name:me?me.name:'',
+      week_start:start,week_end:end,hours:0,premium_hours:0,notes,paid:false,
+      custom:true, amount, file_url:fileUrl,
+      review_log:pending, review_count:pending.length, tip_log:pendingTips, lunch_log:pendingLunches, bonus:tipSum}).select().single();
+    if(error){ toast('Submit failed: '+error.message); return; }
+    inv.id=data.id;
+    sbDo(sb.from('profiles').update({pending_reviews:[], pending_tips:[], pending_lunches:[]}).eq('id',state.me.id));
+    sbDo(sb.from('notifications').insert({contractor_id:state.me.id,contractor_name:me?me.name:'',
+      type:'invoice', summary:`${me?me.name:'A contractor'} submitted their own invoice`,
+      details:[`Week ${start} → ${end}`, `Self-submitted invoice: $${amount.toFixed(2)}`, fileUrl?'File attached':'No file', notes?('Notes: '+notes):''].filter(Boolean)}));
+  }
+  closeSheet(); toast('Invoice submitted ✓'); render();
 }
 function earningsSection(){
   const yr=new Date().getFullYear();
@@ -1441,7 +1510,7 @@ function earningsSection(){
     return `<div class="card" style="cursor:pointer" onclick="toggleInvDetail('${i.id}')">
       <div class="spread">
         <div><h3 style="font-size:15px;margin:0">${i.start} → ${i.end}</h3>
-          <div class="muted">${i.hours||0} hrs${i.premiumHours?` + ${i.premiumHours} premium`:''}</div></div>
+          <div class="muted">${i.custom?'📄 Self-submitted invoice':`${i.hours||0} hrs${i.premiumHours?` + ${i.premiumHours} premium`:''}`}</div></div>
         <div style="text-align:right">
           <div style="font-weight:700;font-size:16px">${t?'$'+t.total.toFixed(2):'—'}</div>
           <span class="pill ${i.paid?'green':'amber'}">${i.paid?'Paid':'Pending'}</span></div>
@@ -1456,8 +1525,14 @@ function earningsSection(){
 }
 function invBreakdownRows(i,t){
   const row=(label,detail,amt)=>`<div class="spread" style="font-size:13px;padding:3px 0"><span>${label}${detail?` <span class="muted" style="font-size:11px">${detail}</span>`:''}</span><span style="font-weight:600">$${amt.toFixed(2)}</span></div>`;
-  let h=row('Regular hours', `${i.hours||0} × $${t.rate.toFixed(2)}`, t.reg);
-  if(i.premiumHours) h+=row('Premium hours', `${i.premiumHours} × $${Number(CONFIG.PREMIUM_RATE).toFixed(2)}`, t.prem);
+  let h;
+  if(t.custom){
+    h=row('Self-submitted invoice', '', t.amount);
+    if(i.fileUrl) h+=`<div style="font-size:12px;padding:3px 0"><a href="${i.fileUrl}" target="_blank" rel="noopener" style="color:var(--teal)">📄 View attached invoice</a></div>`;
+  } else {
+    h=row('Regular hours', `${i.hours||0} × $${t.rate.toFixed(2)}`, t.reg);
+    if(i.premiumHours) h+=row('Premium hours', `${i.premiumHours} × $${Number(CONFIG.PREMIUM_RATE).toFixed(2)}`, t.prem);
+  }
   if(t.reviewCount)  h+=row('5-star reviews', `${t.reviewCount} × $${Number(CONFIG.REVIEW_RATE).toFixed(2)}`, t.reviewsAmt);
   if(t.tip)          h+=row('Tips', '', t.tip);
   if(t.lunchAmt)     h+=row('Paid lunch', `${t.lunchCount} × $${Number(CONFIG.LUNCH_RATE).toFixed(2)}`, t.lunchAmt);
@@ -2031,29 +2106,29 @@ function paySheetGroups(){
   (state.invoices||[]).filter(inv=>!inv.paid).forEach(inv=>{ (byC[inv.contractorId]=byC[inv.contractorId]||[]).push(inv); });
   const groups = Object.keys(byC).map(id=>{
     const invs=byC[id]; const rate=rateOf(id);
-    let hours=0,prem=0,tip=0,reviews=0,total=0,weeks=0,start=null,end=null,missing=false;
+    let hours=0,prem=0,tip=0,reviews=0,total=0,weeks=0,start=null,end=null,missing=false,self=0;
     invs.forEach(inv=>{ hours+=Number(inv.hours||0); prem+=Number(inv.premiumHours||0); tip+=Number(inv.bonus||0); weeks++;
-      const t=invoiceTotal(inv); if(t){ total+=t.total; reviews+=t.reviewsAmt+t.lunchAmt; } else missing=true;
+      const t=invoiceTotal(inv); if(t){ total+=t.total; reviews+=t.reviewsAmt+t.lunchAmt; if(inv.custom) self+=t.amount; } else missing=true;
       if(inv.start&&(!start||inv.start<start)) start=inv.start;
       if(inv.end&&(!end||inv.end>end)) end=inv.end; });
     const mAmt=milestoneAmount(invs); total+=mAmt;
-    return {id, name:invs[0].contractor||'', rate, hours, prem, tip, reviewBonus:reviews+mAmt, total, weeks, start, end, missing};
+    return {id, name:invs[0].contractor||'', rate, hours, prem, tip, reviewBonus:reviews+mAmt, self, total, weeks, start, end, missing};
   });
   // include every active contractor with NO unpaid invoice at $0, for the accountant's reference
   const have=new Set(groups.map(g=>g.id));
   (state.contractors||[]).filter(c=>(c.status||'Active')!=='Removed').forEach(c=>{
     if(have.has(c.id)) return;
-    groups.push({id:c.id, name:c.name||'', rate:rateOf(c.id), hours:0, prem:0, tip:0, reviewBonus:0, total:0, weeks:0, start:null, end:null, missing:false, none:true});
+    groups.push({id:c.id, name:c.name||'', rate:rateOf(c.id), hours:0, prem:0, tip:0, reviewBonus:0, self:0, total:0, weeks:0, start:null, end:null, missing:false, none:true});
   });
   // owed contractors first (by name), then the $0 "no invoice" rows
   groups.sort((a,b)=> (a.none?1:0)-(b.none?1:0) || String(a.name).localeCompare(String(b.name)));
   return groups;
 }
 function paySheetRows(){
-  const rows=[['Contractor','Period','Weeks','Regular hrs','Premium hrs','Rate','Tips','Bonuses (reviews + paid lunch)','Total due']];
+  const rows=[['Contractor','Period','Weeks','Regular hrs','Premium hrs','Rate','Tips','Bonuses (reviews + paid lunch)','Self-submitted $','Total due']];
   paySheetGroups().forEach(g=>{
     rows.push([g.name, g.none?'No invoice submitted':((g.start||'')+' → '+(g.end||'')), g.weeks, g.hours, g.prem,
-      g.rate!=null?g.rate.toFixed(2):'', (g.tip||0).toFixed(2), (g.reviewBonus||0).toFixed(2), g.missing?'rate not set':g.total.toFixed(2)]);
+      g.rate!=null?g.rate.toFixed(2):'', (g.tip||0).toFixed(2), (g.reviewBonus||0).toFixed(2), (g.self||0).toFixed(2), g.missing?'rate not set':g.total.toFixed(2)]);
   });
   return rows;
 }
@@ -2074,7 +2149,7 @@ function emailPaySheet(){
   let grand=0;
   groups.forEach(g=>{ if(!g.missing) grand+=g.total;
     if(g.none){ body+=`${g.name}: no invoice submitted = $0.00\n`; return; }
-    body+=`${g.name}: ${g.hours}h regular`+(g.prem?` + ${g.prem}h premium`:'')+(g.reviewBonus?` + $${g.reviewBonus.toFixed(2)} bonuses (reviews + paid lunch)`:'')+(g.tip?` + $${g.tip.toFixed(2)} tips`:'')+` over ${g.weeks} week${g.weeks>1?'s':''}`
+    body+=`${g.name}: ${g.hours}h regular`+(g.prem?` + ${g.prem}h premium`:'')+(g.self?` + $${g.self.toFixed(2)} self-submitted invoice`:'')+(g.reviewBonus?` + $${g.reviewBonus.toFixed(2)} bonuses (reviews + paid lunch)`:'')+(g.tip?` + $${g.tip.toFixed(2)} tips`:'')+` over ${g.weeks} week${g.weeks>1?'s':''}`
        +(g.missing?' (rate not set)':` = $${g.total.toFixed(2)}`)+'\n'; });
   if(groups.length) body+=`\nTotal to pay out: $${grand.toFixed(2)}\n`;
   window.location.href=`mailto:${co().officeEmail}?subject=${encodeURIComponent(co().name+' pay sheet — amounts owing')}&body=${encodeURIComponent(body)}`;
@@ -2431,18 +2506,24 @@ function rateOf(id){
   return null;
 }
 function invoiceTotal(inv){
-  const rate=rateOf(inv.contractorId);
-  if(rate==null || isNaN(rate)) return null;
-  const reg=Number(inv.hours||0)*rate;
-  const prem=Number(inv.premiumHours||0)*Number(CONFIG.PREMIUM_RATE||0);
   const tip=Number(inv.bonus||0);
   const reviewCount=Number(inv.reviewCount||0);
   const reviewsAmt=reviewCount*Number(CONFIG.REVIEW_RATE||0);
   const lunchCount=(inv.lunchLog||[]).length;
   const lunchAmt=lunchCount*Number(CONFIG.LUNCH_RATE||0);
+  const bonus=tip+reviewsAmt+lunchAmt;
+  // self-submitted invoice: a flat amount the contractor billed (no hours/rate)
+  if(inv.custom){
+    const amount=Number(inv.amount||0);
+    return { custom:true, amount, rate:null, reg:amount, prem:0, tip, reviewCount, reviewsAmt, lunchCount, lunchAmt,
+             bonus, total:amount+bonus };
+  }
+  const rate=rateOf(inv.contractorId);
+  if(rate==null || isNaN(rate)) return null;
+  const reg=Number(inv.hours||0)*rate;
+  const prem=Number(inv.premiumHours||0)*Number(CONFIG.PREMIUM_RATE||0);
   return { rate, reg, prem, tip, reviewCount, reviewsAmt, lunchCount, lunchAmt,
-           bonus:tip+reviewsAmt+lunchAmt,
-           total:reg+prem+tip+reviewsAmt+lunchAmt };
+           bonus, total:reg+prem+tip+reviewsAmt+lunchAmt };
 }
 // $50 per calendar month in which a contractor reaches 5 reviews (derived, not stored)
 function milestoneAmount(invs){
@@ -2492,12 +2573,19 @@ function adminInvoiceCard(inv){
     <div class="spread"><h3 style="font-size:15px;margin:0">${inv.contractor||(c?c.name:'Contractor')}</h3>
       <span class="pill ${inv.paid?'green':'amber'}">${inv.paid?'✓ Paid':'Unpaid'}</span></div>
     <div class="muted" style="margin-top:3px">Week ${range}</div>
-    <div class="row" style="margin-top:5px;gap:8px"><span class="pill blue">${(Number(inv.hours||0)+Number(inv.premiumHours||0))} hrs total</span>
-      <span class="muted">${inv.hours||0} regular${prem}</span></div>
+    ${inv.custom
+      ? `<div class="row" style="margin-top:5px;gap:8px"><span class="pill" style="background:#ede9fe;color:#6d28d9">📄 Self-submitted invoice</span></div>`
+      : `<div class="row" style="margin-top:5px;gap:8px"><span class="pill blue">${(Number(inv.hours||0)+Number(inv.premiumHours||0))} hrs total</span>
+      <span class="muted">${inv.hours||0} regular${prem}</span></div>`}
     ${(()=>{ const t=invoiceTotal(inv);
-      return t? `<div style="margin-top:8px;font-size:16px;font-weight:700;color:#0f172a">Total due: $${t.total.toFixed(2)}</div>
-        <div class="muted" style="font-size:12px">${inv.hours||0} hrs × $${t.rate.toFixed(2)}${inv.premiumHours?` + ${inv.premiumHours} premium × $${Number(CONFIG.PREMIUM_RATE).toFixed(2)}`:''}${t.reviewsAmt?` + ${t.reviewCount} review${t.reviewCount>1?'s':''} × $${Number(CONFIG.REVIEW_RATE).toFixed(2)}`:''}${t.tip?` + $${t.tip.toFixed(2)} tip`:''}</div>`
-        : `<div class="muted" style="margin-top:8px;font-size:12px">Set this contractor's hourly pay on the Team tab to see total due.</div>`; })()}
+      if(!t) return `<div class="muted" style="margin-top:8px;font-size:12px">Set this contractor's hourly pay on the Team tab to see total due.</div>`;
+      const sub = inv.custom
+        ? `Self-submitted: $${t.amount.toFixed(2)}${t.reviewsAmt?` + ${t.reviewCount} review${t.reviewCount>1?'s':''}`:''}${t.tip?` + $${t.tip.toFixed(2)} tip`:''}${t.lunchAmt?' + paid lunch':''}`
+        : `${inv.hours||0} hrs × $${t.rate.toFixed(2)}${inv.premiumHours?` + ${inv.premiumHours} premium × $${Number(CONFIG.PREMIUM_RATE).toFixed(2)}`:''}${t.reviewsAmt?` + ${t.reviewCount} review${t.reviewCount>1?'s':''} × $${Number(CONFIG.REVIEW_RATE).toFixed(2)}`:''}${t.tip?` + $${t.tip.toFixed(2)} tip`:''}`;
+      return `<div style="margin-top:8px;font-size:16px;font-weight:700;color:#0f172a">Total due: $${t.total.toFixed(2)}</div>
+        <div class="muted" style="font-size:12px">${sub}</div>
+        ${inv.custom&&inv.fileUrl?`<div style="margin-top:6px"><a href="${inv.fileUrl}" target="_blank" rel="noopener" style="color:var(--teal);font-size:13px">📄 View attached invoice</a></div>`:''}`;
+    })()}
     <div style="margin-top:10px;background:#f8fafc;border:1px solid var(--line);border-radius:10px;padding:9px 11px;font-size:13px">
       <span style="font-weight:600">📝 Notes:</span> ${inv.notes?inv.notes:'<span class="muted">No notes left</span>'}
     </div>
@@ -2544,21 +2632,31 @@ function openEditInvoice(id){
     <button class="closex" onclick="closeSheet()">×</button>
     <h3>Edit invoice</h3>
     <div class="muted" style="margin-top:-6px">${inv.contractor||'Contractor'}${range?` · Week ${range}`:''}</div>
-    <label>Regular hours</label><input id="eiHours" type="number" step="0.25" min="0" value="${inv.hours||0}">
-    <label>Premium hours</label><input id="eiPrem" type="number" step="0.25" min="0" value="${inv.premiumHours||0}">
+    ${inv.custom
+      ? `<label>Self-submitted amount ($)</label><input id="eiAmount" type="number" step="0.01" min="0" value="${inv.amount||0}">`
+      : `<label>Regular hours</label><input id="eiHours" type="number" step="0.25" min="0" value="${inv.hours||0}">
+    <label>Premium hours</label><input id="eiPrem" type="number" step="0.25" min="0" value="${inv.premiumHours||0}">`}
     <label>Notes</label><textarea id="eiNotes" rows="3" style="width:100%">${inv.notes||''}</textarea>
     <button class="btn primary" style="margin-top:16px" onclick="saveInvoiceEdit('${id}')">Save changes</button>
   `);
 }
 async function saveInvoiceEdit(id){
   const inv=state.invoices.find(x=>x.id===id); if(!inv)return;
-  const hours=parseFloat(val('eiHours'))||0;
-  const prem =parseFloat(val('eiPrem'))||0;
   const notes=val('eiNotes')||'';
-  if(hours<0||prem<0){ toast('Hours cannot be negative'); return; }
-  inv.hours=hours; inv.premiumHours=prem; inv.notes=notes;
-  if(ONLINE){ const { error } = await sb.from('invoices').update({hours,premium_hours:prem,notes}).eq('id',id);
-    if(error){ toast('Save failed: '+error.message); return; } }
+  if(inv.custom){
+    const amount=parseFloat(val('eiAmount'))||0;
+    if(amount<0){ toast('Amount cannot be negative'); return; }
+    inv.amount=amount; inv.notes=notes;
+    if(ONLINE){ const { error } = await sb.from('invoices').update({amount,notes}).eq('id',id);
+      if(error){ toast('Save failed: '+error.message); return; } }
+  } else {
+    const hours=parseFloat(val('eiHours'))||0;
+    const prem =parseFloat(val('eiPrem'))||0;
+    if(hours<0||prem<0){ toast('Hours cannot be negative'); return; }
+    inv.hours=hours; inv.premiumHours=prem; inv.notes=notes;
+    if(ONLINE){ const { error } = await sb.from('invoices').update({hours,premium_hours:prem,notes}).eq('id',id);
+      if(error){ toast('Save failed: '+error.message); return; } }
+  }
   closeSheet(); toast('Invoice updated ✓'); render();
 }
 // reviews are logged on the contractor PROFILE (pending) and attach to their next invoice on submit
