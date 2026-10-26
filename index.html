@@ -1412,32 +1412,40 @@ function answerOffer(id,ans){
 }
 
 function viewInvoices(){
+  const yr=new Date().getFullYear();
+  const mine=(state.invoices||[]).filter(i=> i.contractorId===state.me.id);
+  let earned=0, missing=false;
+  mine.filter(i=>String(i.start||'').slice(0,4)===String(yr)).forEach(i=>{ const t=invoiceTotal(i); if(t) earned+=t.total; else missing=true; });
+  let pendingAmt=0; mine.filter(i=>!i.paid).forEach(i=>{ const t=invoiceTotal(i); if(t) pendingAmt+=t.total; });
   return `
-  <div class="notice">Submit <strong>one invoice per week</strong> for the hours you worked. When you submit, an email opens pre-filled to the office — just hit send. Payment is by direct deposit.</div>
-  <h2 class="section">Submit your weekly invoice</h2>
-  <div class="card">
-    <label>Week start (Monday)</label>
-    <input id="invStart" type="date">
-    <label>Week end (Sunday)</label>
-    <input id="invEnd" type="date">
-    <label>Regular hours worked this week</label>
-    <input id="invHours" type="number" inputmode="decimal" step="0.25" placeholder="e.g. 22.5">
-    <label>Premium hours (short-notice — $27/hr)</label>
-    <input id="invPremium" type="number" inputmode="decimal" step="0.25" placeholder="e.g. 4">
-    <label>Notes (optional — jobs covered)</label>
-    <textarea id="invNotes" placeholder="e.g. Mon Maplewood Offices, Wed Glebe residence…"></textarea>
-    <button class="btn primary" style="margin-top:14px" onclick="submitInvoice()">Submit weekly invoice</button>
+  <h2 class="section">Invoices</h2>
+  <div class="statgrid" style="grid-template-columns:1fr 1fr">
+    <div class="stat"><div class="n" style="color:#045ea9">$${earned.toFixed(2)}</div><div class="l">Earned in ${yr}</div></div>
+    <div class="stat"><div class="n" style="color:var(--amber)">$${pendingAmt.toFixed(2)}</div><div class="l">Awaiting payment</div></div>
   </div>
-  <p class="muted" style="text-align:center">⏰ Invoices must be submitted by midnight on Sundays, or processing may be delayed.</p>
+  ${missing?`<div class="muted" style="font-size:12px;text-align:center;margin-top:4px">Some weeks are awaiting a pay rate from the office.</div>`:''}
 
-  <h2 class="section">Prefer your own invoice?</h2>
-  <div class="card">
-    <div class="muted" style="font-size:13px;margin-bottom:8px">If you invoice in your own format, submit it here instead — enter the total and attach your file. It's added to payroll the same way.</div>
-    <button class="btn ghost" style="width:100%" onclick="openOwnInvoice()">${svg('<path d="M12 5v14M5 12h14"/>')} Submit your own invoice</button>
+  <h2 class="section">Submit an invoice</h2>
+  <div class="btnrow">
+    <button class="btn primary" style="flex:1" onclick="openWeeklyInvoice()">${svg(ICON.invoice)} Weekly hours</button>
+    <button class="btn ghost" style="flex:1" onclick="openOwnInvoice()">📄 Your own</button>
   </div>
+  <p class="muted" style="font-size:12px;text-align:center;margin-top:8px">⏰ Submit by midnight Sunday. <strong>Weekly hours</strong> fills in our template; <strong>Your own</strong> lets you attach your own invoice and total. Payment is by direct deposit.</p>
 
-  ${earningsSection()}
+  ${invoiceListSection(mine)}
   `;
+}
+function openWeeklyInvoice(){
+  sheet(`
+    <button class="closex" onclick="closeSheet()">×</button>
+    <h3>Submit weekly invoice</h3>
+    <label>Week start (Monday)</label><input id="invStart" type="date">
+    <label>Week end (Sunday)</label><input id="invEnd" type="date">
+    <label>Regular hours worked this week</label><input id="invHours" type="number" inputmode="decimal" step="0.25" placeholder="e.g. 22.5">
+    <label>Premium hours (short-notice — $${CONFIG.PREMIUM_RATE}/hr)</label><input id="invPremium" type="number" inputmode="decimal" step="0.25" placeholder="e.g. 4">
+    <label>Notes (optional — jobs covered)</label><textarea id="invNotes" placeholder="e.g. Mon Maplewood Offices, Wed Glebe residence…"></textarea>
+    <button class="btn primary" style="margin-top:14px" onclick="submitInvoice()">Submit weekly invoice</button>
+  `);
 }
 let ownInvoiceFile=null;
 function openOwnInvoice(){
@@ -1493,35 +1501,32 @@ async function submitOwnInvoice(){
   }
   closeSheet(); toast('Invoice submitted ✓'); render();
 }
-function earningsSection(){
-  const yr=new Date().getFullYear();
-  const mine=(state.invoices||[]).filter(i=> i.contractorId===state.me.id && String(i.start||'').slice(0,4)===String(yr));
-  let total=0, missing=false;
-  mine.forEach(i=>{ const t=invoiceTotal(i); if(t) total+=t.total; else missing=true; });
-  const sorted=mine.slice().sort((a,b)=>String(b.start||'').localeCompare(String(a.start||'')));
+function invoiceListSection(mine){
+  const sorted=(mine||[]).slice().sort((a,b)=>String(b.start||'').localeCompare(String(a.start||'')));
+  if(!sorted.length) return `<h2 class="section">Your invoices</h2><div class="card muted">No invoices yet — submit your first one above.</div>`;
+  const pending=sorted.filter(i=>!i.paid);
+  const paid=sorted.filter(i=>i.paid);
   return `
-  <h2 class="section">Your earnings — ${yr}</h2>
-  <div class="card" style="text-align:center">
-    <div class="muted">Total earned this year</div>
-    <div style="font-size:28px;font-weight:800;color:#045ea9">$${total.toFixed(2)}</div>
-    ${missing?`<div class="muted" style="font-size:12px;margin-top:4px">Some weeks are awaiting a pay rate from the office.</div>`:''}
-  </div>
-  ${sorted.length?sorted.map(i=>{ const t=invoiceTotal(i);
-    return `<div class="card" style="cursor:pointer" onclick="toggleInvDetail('${i.id}')">
-      <div class="spread">
-        <div><h3 style="font-size:15px;margin:0">${i.start} → ${i.end}</h3>
-          <div class="muted">${i.custom?'📄 Self-submitted invoice':`${i.hours||0} hrs${i.premiumHours?` + ${i.premiumHours} premium`:''}`}</div></div>
-        <div style="text-align:right">
-          <div style="font-weight:700;font-size:16px">${t?'$'+t.total.toFixed(2):'—'}</div>
-          <span class="pill ${i.paid?'green':'amber'}">${i.paid?'Paid':'Pending'}</span></div>
-      </div>
-      <div id="invd_${i.id}" style="display:none;margin-top:10px;border-top:1px solid var(--line);padding-top:10px">
-        ${t? invBreakdownRows(i,t) : `<div class="muted" style="font-size:13px">Waiting on a pay rate from the office to show your total.</div>`}
-        ${i.notes?`<div class="muted" style="font-size:12px;margin-top:8px">📝 ${i.notes}</div>`:''}
-      </div>
-      <div class="muted" style="font-size:12px;margin-top:8px;text-align:center" id="invtoggle_${i.id}">Tap to see breakdown ▾</div>
-    </div>`;}).join(''):`<div class="card muted">No invoices yet this year.</div>`}
+  ${pending.length?`<h2 class="section">Awaiting payment (${pending.length})</h2>${pending.map(invoiceCard).join('')}`:''}
+  ${paid.length?`<h2 class="section">Paid (${paid.length})</h2>${paid.map(invoiceCard).join('')}`:''}
   `;
+}
+function invoiceCard(i){
+  const t=invoiceTotal(i);
+  return `<div class="card" style="cursor:pointer" onclick="toggleInvDetail('${i.id}')">
+    <div class="spread">
+      <div><h3 style="font-size:15px;margin:0">${i.start} → ${i.end}</h3>
+        <div class="muted">${i.custom?'📄 Self-submitted invoice':`${i.hours||0} hrs${i.premiumHours?` + ${i.premiumHours} premium`:''}`}</div></div>
+      <div style="text-align:right">
+        <div style="font-weight:700;font-size:16px">${t?'$'+t.total.toFixed(2):'—'}</div>
+        <span class="pill ${i.paid?'green':'amber'}">${i.paid?'Paid':'Pending'}</span></div>
+    </div>
+    <div id="invd_${i.id}" style="display:none;margin-top:10px;border-top:1px solid var(--line);padding-top:10px">
+      ${t? invBreakdownRows(i,t) : `<div class="muted" style="font-size:13px">Waiting on a pay rate from the office to show your total.</div>`}
+      ${i.notes?`<div class="muted" style="font-size:12px;margin-top:8px">📝 ${i.notes}</div>`:''}
+    </div>
+    <div class="muted" style="font-size:12px;margin-top:8px;text-align:center" id="invtoggle_${i.id}">Tap to see breakdown ▾</div>
+  </div>`;
 }
 function invBreakdownRows(i,t){
   const row=(label,detail,amt)=>`<div class="spread" style="font-size:13px;padding:3px 0"><span>${label}${detail?` <span class="muted" style="font-size:11px">${detail}</span>`:''}</span><span style="font-weight:600">$${amt.toFixed(2)}</span></div>`;
@@ -1572,6 +1577,7 @@ function submitInvoice(){
         tipSum?`$${tipSum.toFixed(2)} in tips attached`:'',
         lunchSum?`$${lunchSum.toFixed(2)} paid lunch attached`:'', notes?('Notes: '+notes):'No notes'].filter(Boolean)}));
   }
+  closeSheet();
   emailInvoice(inv);
   toast('Invoice saved — opening your email to send ✓'); render();
 }
@@ -2079,19 +2085,35 @@ function showContractorReviews(cid){
 }
 function setInvFilter(f){ invFilter=f; render(); }
 function adminInvoicesView(){
-  const all=state.invoices.slice().reverse();
+  const all=state.invoices.slice();
   const list = invFilter==='all'?all : all.filter(i=> invFilter==='paid'? i.paid : !i.paid);
   const unpaidTotal=state.invoices.filter(i=>!i.paid).reduce((s,i)=>s+Number(i.hours||0)+Number(i.premiumHours||0),0);
+  // group invoices by pay period (week range), newest period first
+  const groups={};
+  list.forEach(i=>{ const key=(i.start||'?')+'|'+(i.end||'?'); (groups[key]=groups[key]||[]).push(i); });
+  const keys=Object.keys(groups).sort((a,b)=> String(b.split('|')[0]).localeCompare(String(a.split('|')[0])));
+  const body = keys.length ? keys.map((k,idx)=>{
+    const invs=groups[k]; const s=k.split('|')[0], e=k.split('|')[1];
+    let amt=0,missing=false; invs.forEach(iv=>{ const t=invoiceTotal(iv); if(t) amt+=t.total; else missing=true; });
+    const unpaidN=invs.filter(iv=>!iv.paid).length;
+    const meta=`${invs.length} invoice${invs.length>1?'s':''}${unpaidN?` · ${unpaidN} unpaid`:''}${amt?` · $${amt.toFixed(2)}${missing?'+':''}`:''}`;
+    return `<details class="acc"${idx===0?' open':''}>
+      <summary>
+        <span>🗓️ ${fmtDate(s)} → ${fmtDate(e)} <span class="muted" style="font-size:12px">· ${meta}</span></span>
+        ${svg('<path d="M6 9l6 6 6-6"/>')}
+      </summary>
+      <div class="accbody">${invs.map(adminInvoiceCard).join('')}</div>
+    </details>`;
+  }).join('') : `<div class="card muted">No ${invFilter==='all'?'':invFilter+' '}invoices.</div>`;
   return `
   <h2 class="section">Weekly invoices</h2>
-  <div class="notice">Tap <strong>Mark paid</strong> once you've sent a contractor's direct deposit. ${unpaidTotal?`<strong>${unpaidTotal} hrs</strong> awaiting payment.`:'All caught up 🎉'}</div>
+  <div class="notice">Grouped by <strong>pay period</strong>, newest first — tap a period to open it. Tap <strong>Mark paid</strong> once a contractor's direct deposit is sent.${unpaidTotal?` <strong>${unpaidTotal} hrs</strong> awaiting payment.`:' All caught up 🎉'}</div>
   <div class="zonechips" style="margin-bottom:12px">
     ${[['unpaid','Unpaid'],['paid','Paid'],['all','All']].map(([f,l])=>`
       <span class="chip" style="cursor:pointer;padding:7px 12px;${invFilter===f?'background:var(--teal);color:#fff':''}"
         onclick="setInvFilter('${f}')">${l}</span>`).join('')}
   </div>
-  ${list.length?list.map(adminInvoiceCard).join('')
-    :`<div class="card muted">No ${invFilter==='all'?'':invFilter+' '}invoices.</div>`}
+  ${body}
   <h2 class="section">Pay sheet</h2>
   <p class="muted" style="margin:-4px 0 8px;font-size:13px">Only <strong>unpaid</strong> invoices, <strong>combined per contractor</strong> — so each person's weekly invoices add up to one biweekly payout.</p>
   <div class="btnrow">
@@ -2235,6 +2257,24 @@ async function setFirstJob(id){
   if(ONLINE){ const {error}=await sb.from('profiles').update({first_job:v||null}).eq('id',id); if(error){toast('Save failed: '+error.message);return;} }
   toast('First job date saved ✓'); render();
 }
+// a contractor's invoices grouped by pay period (newest first) — used on their profile
+function contractorInvoicesSection(cid){
+  const mine=(state.invoices||[]).filter(iv=>iv.contractorId===cid);
+  if(!mine.length) return `<div class="card muted">No invoices submitted yet.</div>`;
+  const groups={};
+  mine.forEach(i=>{ const key=(i.start||'?')+'|'+(i.end||'?'); (groups[key]=groups[key]||[]).push(i); });
+  const keys=Object.keys(groups).sort((a,b)=> String(b.split('|')[0]).localeCompare(String(a.split('|')[0])));
+  return keys.map((k,idx)=>{
+    const invs=groups[k]; const s=k.split('|')[0], e=k.split('|')[1];
+    let amt=0,missing=false; invs.forEach(iv=>{ const t=invoiceTotal(iv); if(t) amt+=t.total; else missing=true; });
+    const unpaidN=invs.filter(iv=>!iv.paid).length;
+    const meta=`${invs.length} invoice${invs.length>1?'s':''}${unpaidN?` · ${unpaidN} unpaid`:''}${amt?` · $${amt.toFixed(2)}${missing?'+':''}`:''}`;
+    return `<details class="acc"${idx===0?' open':''}>
+      <summary><span>🗓️ ${fmtDate(s)} → ${fmtDate(e)} <span class="muted" style="font-size:12px">· ${meta}</span></span>${svg('<path d="M6 9l6 6 6-6"/>')}</summary>
+      <div class="accbody">${invs.map(adminInvoiceCard).join('')}</div>
+    </details>`;
+  }).join('');
+}
 function adminProfileView(id){
   const m=(state.team||[]).find(x=>x.id===id)||(state.contractors||[]).find(x=>x.id===id);
   if(!m) return `<button class="btn ghost sm" onclick="backToTeam()">‹ Team</button><div class="card muted" style="margin-top:10px">Profile not found.</div>`;
@@ -2259,6 +2299,10 @@ function adminProfileView(id){
       <tr><td class="muted" style="padding:5px 0">Earnings ${yr}</td><td style="text-align:right;font-weight:700">$${earn.toFixed(2)}</td></tr>
     </table>
   </div>
+  ${isContractor?`
+  <h2 class="section">Invoices by pay period</h2>
+  ${contractorInvoicesSection(m.id)}
+  `:''}
   ${isContractor?`
   <h2 class="section">Tenure</h2>
   <div class="card">
