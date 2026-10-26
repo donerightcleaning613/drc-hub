@@ -2852,7 +2852,9 @@ function openOfferJob(){
     <label>Job / client</label><input id="ojClient" placeholder="e.g. Hampton Inn — lobby">
     <label>Date & time</label><input id="ojDate" placeholder="e.g. Sat Jun 27, 8:00 AM">
     <label>Address</label><input id="ojAddr" placeholder="Street, neighbourhood">
-    <label>Pay — set the rate (raise it for urgent fills)</label><input id="ojPay" value="$27/hr" placeholder="e.g. $35/hr or $200 flat">
+    <label>Pay rate — $/hr (raise it for urgent fills)</label>
+    <div class="row" style="gap:6px;align-items:center;margin-top:4px"><span class="muted">$</span><input id="ojPayRate" type="number" inputmode="decimal" step="0.5" min="0" value="27" style="flex:1;margin:0"><span class="muted">/hr</span></div>
+    <label>Or a flat amount instead (optional)</label><input id="ojPayFlat" placeholder="e.g. 200 for the whole job">
     <label>Why is it an extra assignment?</label>
     <div id="ojReasons" style="margin-top:8px">
       ${['Short notice','Holiday','Outside service zone','Outside given availability'].map(r=>`
@@ -2872,8 +2874,12 @@ function openOfferJob(){
   `);
 }
 function sendOffer(){
-  const client=val('ojClient'),date=val('ojDate'),addr=val('ojAddr'),pay=val('ojPay');
-  if(!client||!date||!pay){ toast('Add client, date and pay'); return; }
+  const client=val('ojClient'),date=val('ojDate'),addr=val('ojAddr');
+  const flat=val('ojPayFlat'), rate=val('ojPayRate');
+  let pay;
+  if(flat){ pay=flat.trim(); if(!pay.startsWith('$')) pay='$'+pay; }
+  else { const r=parseFloat(rate); if(isNaN(r)||r<=0){ toast('Enter a pay rate (or a flat amount)'); return; } pay='$'+(Number.isInteger(r)?r:r.toFixed(2))+'/hr'; }
+  if(!client||!date){ toast('Add client and date'); return; }
   const reasons=[...document.querySelectorAll('#ojReasons .checkrow.sel')].map(e=>e.textContent.trim());
   const who=[...document.querySelectorAll('#ojWho .checkrow.sel')].map(e=>e.dataset.id);
   if(!who.length){ toast('Pick at least one contractor'); return; }
