@@ -396,7 +396,7 @@ async function sbLoadAll(){
     notes:i.notes||'',paid:!!i.paid,status:i.paid?'Paid':'Submitted',
     bonus:Number(i.bonus)||0,bonusNote:i.bonus_note||'',tipLog:i.tip_log||[],lunchLog:i.lunch_log||[],
     reviewLog:i.review_log||[],reviewCount:(i.review_log||[]).length,milestone:Number(i.milestone)||0,
-    custom:!!i.custom, amount:Number(i.amount)||0, fileUrl:i.file_url||''}));
+    custom:!!i.custom, amount:Number(i.amount)||0, fileUrl:i.file_url||'', premiumLines:i.premium_lines||[]}));
 
   const inc = (await sb.from('incidents').select('*').order('created_at',{ascending:false})).data || [];
   state.incidents = inc.map(r=>({id:r.id,type:r.type,where:r.where_text,date:r.occurred_on,desc:r.description}));
@@ -1442,10 +1442,36 @@ function openWeeklyInvoice(){
     <label>Week start (Monday)</label><input id="invStart" type="date">
     <label>Week end (Sunday)</label><input id="invEnd" type="date">
     <label>Regular hours worked this week</label><input id="invHours" type="number" inputmode="decimal" step="0.25" placeholder="e.g. 22.5">
-    <label>Premium hours (short-notice — $${CONFIG.PREMIUM_RATE}/hr)</label><input id="invPremium" type="number" inputmode="decimal" step="0.25" placeholder="e.g. 4">
-    <label>Notes (optional — jobs covered)</label><textarea id="invNotes" placeholder="e.g. Mon Maplewood Offices, Wed Glebe residence…"></textarea>
+    <label>Premium hours (short-notice / special rate)</label>
+    <div class="muted" style="font-size:12px;margin-bottom:6px">Add a line for each premium job — include the client and the rate you were offered. Add more lines if different jobs had different rates.</div>
+    <div id="premLines"></div>
+    <button class="btn ghost sm" style="width:100%;margin-top:4px" onclick="addPremLine()">+ Add a premium line</button>
+    <label style="margin-top:14px">Notes (optional — jobs covered)</label><textarea id="invNotes" placeholder="e.g. Mon Maplewood Offices, Wed Glebe residence…"></textarea>
     <button class="btn primary" style="margin-top:14px" onclick="submitInvoice()">Submit weekly invoice</button>
   `);
+  addPremLine();
+}
+function addPremLine(client, hours, rate){
+  const box=document.getElementById('premLines'); if(!box) return;
+  const row=document.createElement('div'); row.className='premline';
+  row.style.cssText='border:1px solid var(--line);border-radius:10px;padding:8px;margin-bottom:8px';
+  row.innerHTML=`
+    <input class="pc" placeholder="Client / job (required)" value="${client||''}" style="width:100%;margin:0 0 6px">
+    <div class="row" style="gap:6px;align-items:center">
+      <input class="ph" type="number" inputmode="decimal" step="0.25" min="0" placeholder="hrs" value="${hours||''}" style="width:64px;margin:0">
+      <span class="muted">hrs @ $</span>
+      <input class="pr" type="number" inputmode="decimal" step="0.5" min="0" value="${rate||CONFIG.PREMIUM_RATE}" style="width:64px;margin:0">
+      <span class="muted">/hr</span>
+      <button class="btn ghost sm" style="margin:0 0 0 auto;padding:6px 9px" onclick="this.closest('.premline').remove()">✕</button>
+    </div>`;
+  box.appendChild(row);
+}
+function readPremLines(){
+  return [...document.querySelectorAll('#premLines .premline')].map(r=>({
+    client:(r.querySelector('.pc').value||'').trim(),
+    hours:parseFloat(r.querySelector('.ph').value)||0,
+    rate:parseFloat(r.querySelector('.pr').value)||0
+  })).filter(l=>l.hours>0 || l.client);
 }
 let ownInvoiceFile=null;
 function openOwnInvoice(){
@@ -1536,7 +1562,11 @@ function invBreakdownRows(i,t){
     if(i.fileUrl) h+=`<div style="font-size:12px;padding:3px 0"><a href="${i.fileUrl}" target="_blank" rel="noopener" style="color:var(--teal)">📄 View attached invoice</a></div>`;
   } else {
     h=row('Regular hours', `${i.hours||0} × $${t.rate.toFixed(2)}`, t.reg);
-    if(i.premiumHours) h+=row('Premium hours', `${i.premiumHours} × $${Number(CONFIG.PREMIUM_RATE).toFixed(2)}`, t.prem);
+    if(i.premiumLines&&i.premiumLines.length){
+      i.premiumLines.forEach(l=>h+=row(`Premium — ${l.client||'job'}`, `${l.hours} × $${Number(l.rate).toFixed(2)}`, Number(l.hours||0)*Number(l.rate||0)));
+    } else if(i.premiumHours){
+      h+=row('Premium hours', `${i.premiumHours} × $${Number(CONFIG.PREMIUM_RATE).toFixed(2)}`, t.prem);
+    }
   }
   if(t.reviewCount)  h+=row('5-star reviews', `${t.reviewCount} × $${Number(CONFIG.REVIEW_RATE).toFixed(2)}`, t.reviewsAmt);
   if(t.tip)          h+=row('Tips', '', t.tip);
@@ -1551,9 +1581,14 @@ function toggleInvDetail(id){
   const tog=document.getElementById('invtoggle_'+id); if(tog) tog.textContent=open?'Hide breakdown ▴':'Tap to see breakdown ▾';
 }
 function submitInvoice(){
-  const start=val('invStart'),end=val('invEnd'),hours=parseFloat(val('invHours')),
-        premiumHours=parseFloat(val('invPremium'))||0,notes=val('invNotes');
+  const start=val('invStart'),end=val('invEnd'),hours=parseFloat(val('invHours')),notes=val('invNotes');
+  const premLines=readPremLines();
   if(!start||!end||!hours){ toast('Add the week range and regular hours'); return; }
+  // every premium line needs a client + hours
+  for(const l of premLines){ if(l.hours>0 && !l.client){ toast('Add the client name for each premium line'); return; }
+    if(l.client && !(l.hours>0)){ toast('Add the hours for each premium line'); return; } }
+  const premiumLines=premLines.filter(l=>l.hours>0 && l.client && l.rate>0);
+  const premiumHours=premiumLines.reduce((s,l)=>s+l.hours,0);
   const me=state.contractors.find(x=>x.id===state.me.id);
   const pending=(me&&me.pendingReviews||[]).slice();   // reviews logged on their profile → attach now
   const pendingTips=(me&&me.pendingTips||[]).slice();  // tips logged on their profile → attach now
@@ -1561,13 +1596,13 @@ function submitInvoice(){
   const tipSum=pendingTips.reduce((s,t)=>s+Number(t.amount||0),0);
   const lunchSum=pendingLunches.length*Number(CONFIG.LUNCH_RATE||0);
   const inv={id:'i'+Date.now(),contractorId:state.me.id,contractor:me?me.name:'',
-    start,end,hours,premiumHours,notes,submittedAt:new Date().toISOString(),paid:false,status:'Submitted',
+    start,end,hours,premiumHours,premiumLines,notes,submittedAt:new Date().toISOString(),paid:false,status:'Submitted',
     reviewLog:pending, reviewCount:pending.length, tipLog:pendingTips, lunchLog:pendingLunches, bonus:tipSum};
-  state.invoices.push(inv);
+  state.invoices.push(inv); if(state.allInvoices) state.allInvoices.push(inv);
   if(me){ me.pendingReviews=[]; me.pendingTips=[]; me.pendingLunches=[]; }   // clear pending now that they're on the invoice
   if(ONLINE){
     sbDo(sb.from('invoices').insert({contractor_id:state.me.id,contractor_name:me?me.name:'',
-      week_start:start,week_end:end,hours,premium_hours:premiumHours,notes,paid:false,
+      week_start:start,week_end:end,hours,premium_hours:premiumHours,premium_lines:premiumLines,notes,paid:false,
       review_log:pending, review_count:pending.length, tip_log:pendingTips, lunch_log:pendingLunches, bonus:tipSum}));
     sbDo(sb.from('profiles').update({pending_reviews:[], pending_tips:[], pending_lunches:[]}).eq('id',state.me.id));
     sbDo(sb.from('notifications').insert({contractor_id:state.me.id,contractor_name:me?me.name:'',
@@ -2565,7 +2600,11 @@ function invoiceTotal(inv){
   const rate=rateOf(inv.contractorId);
   if(rate==null || isNaN(rate)) return null;
   const reg=Number(inv.hours||0)*rate;
-  const prem=Number(inv.premiumHours||0)*Number(CONFIG.PREMIUM_RATE||0);
+  // premium: sum of per-line (hours × that line's rate); fall back to legacy single field
+  const lines=(inv.premiumLines&&inv.premiumLines.length)?inv.premiumLines:null;
+  const prem = lines
+    ? lines.reduce((s,l)=>s+Number(l.hours||0)*Number(l.rate||0),0)
+    : Number(inv.premiumHours||0)*Number(CONFIG.PREMIUM_RATE||0);
   return { rate, reg, prem, tip, reviewCount, reviewsAmt, lunchCount, lunchAmt,
            bonus, total:reg+prem+tip+reviewsAmt+lunchAmt };
 }
@@ -2625,7 +2664,7 @@ function adminInvoiceCard(inv){
       if(!t) return `<div class="muted" style="margin-top:8px;font-size:12px">Set this contractor's hourly pay on the Team tab to see total due.</div>`;
       const sub = inv.custom
         ? `Self-submitted: $${t.amount.toFixed(2)}${t.reviewsAmt?` + ${t.reviewCount} review${t.reviewCount>1?'s':''}`:''}${t.tip?` + $${t.tip.toFixed(2)} tip`:''}${t.lunchAmt?' + paid lunch':''}`
-        : `${inv.hours||0} hrs × $${t.rate.toFixed(2)}${inv.premiumHours?` + ${inv.premiumHours} premium × $${Number(CONFIG.PREMIUM_RATE).toFixed(2)}`:''}${t.reviewsAmt?` + ${t.reviewCount} review${t.reviewCount>1?'s':''} × $${Number(CONFIG.REVIEW_RATE).toFixed(2)}`:''}${t.tip?` + $${t.tip.toFixed(2)} tip`:''}`;
+        : `${inv.hours||0} hrs × $${t.rate.toFixed(2)}${inv.premiumHours?` + ${inv.premiumHours} premium hrs ($${t.prem.toFixed(2)})`:''}${t.reviewsAmt?` + ${t.reviewCount} review${t.reviewCount>1?'s':''} × $${Number(CONFIG.REVIEW_RATE).toFixed(2)}`:''}${t.tip?` + $${t.tip.toFixed(2)} tip`:''}`;
       return `<div style="margin-top:8px;font-size:16px;font-weight:700;color:#0f172a">Total due: $${t.total.toFixed(2)}</div>
         <div class="muted" style="font-size:12px">${sub}</div>
         ${inv.custom&&inv.fileUrl?`<div style="margin-top:6px"><a href="${inv.fileUrl}" target="_blank" rel="noopener" style="color:var(--teal);font-size:13px">📄 View attached invoice</a></div>`:''}`;
@@ -2633,6 +2672,10 @@ function adminInvoiceCard(inv){
     <div style="margin-top:10px;background:#f8fafc;border:1px solid var(--line);border-radius:10px;padding:9px 11px;font-size:13px">
       <span style="font-weight:600">📝 Notes:</span> ${inv.notes?inv.notes:'<span class="muted">No notes left</span>'}
     </div>
+    ${(inv.premiumLines&&inv.premiumLines.length)?`<div style="margin-top:10px;background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:10px 11px">
+      <div style="font-size:12px;font-weight:600;color:#9a3412">⏱️ Premium hours (${inv.premiumLines.reduce((s,l)=>s+Number(l.hours||0),0)} hrs)</div>
+      ${inv.premiumLines.map(l=>`<div style="margin-top:6px;font-size:13px">✓ ${l.client||'job'} — ${l.hours} hr × $${Number(l.rate).toFixed(2)} = <strong>$${(Number(l.hours||0)*Number(l.rate||0)).toFixed(2)}</strong></div>`).join('')}
+    </div>`:''}
     ${(inv.reviewLog||[]).length?`<div style="margin-top:10px;background:#ecfdf3;border:1px solid #bbe3cc;border-radius:10px;padding:10px 11px">
       <div style="font-size:12px;font-weight:600;color:#166534">⭐ ${inv.reviewLog.length} 5-star review${inv.reviewLog.length>1?'s':''} on this invoice · $${inv.reviewLog.length*Number(CONFIG.REVIEW_RATE)}</div>
       ${inv.reviewLog.map(r=>`<div style="margin-top:6px;font-size:13px">✓ ${r.note?r.note:'Review'} <span class="muted" style="font-size:11px">— logged by ${r.by||'?'} · ${fmtDate(r.at)}</span></div>`).join('')}
@@ -2679,7 +2722,9 @@ function openEditInvoice(id){
     ${inv.custom
       ? `<label>Self-submitted amount ($)</label><input id="eiAmount" type="number" step="0.01" min="0" value="${inv.amount||0}">`
       : `<label>Regular hours</label><input id="eiHours" type="number" step="0.25" min="0" value="${inv.hours||0}">
-    <label>Premium hours</label><input id="eiPrem" type="number" step="0.25" min="0" value="${inv.premiumHours||0}">`}
+    ${(inv.premiumLines&&inv.premiumLines.length)
+      ? `<label>Premium hours (per line)</label><div class="muted" style="font-size:12px;line-height:1.6">${inv.premiumLines.map(l=>`${l.client}: ${l.hours}h @ $${Number(l.rate).toFixed(2)}`).join('<br>')}<br><em>To change premium, delete this invoice and have the contractor resubmit.</em></div>`
+      : `<label>Premium hours</label><input id="eiPrem" type="number" step="0.25" min="0" value="${inv.premiumHours||0}">`}`}
     <label>Notes</label><textarea id="eiNotes" rows="3" style="width:100%">${inv.notes||''}</textarea>
     <button class="btn primary" style="margin-top:16px" onclick="saveInvoiceEdit('${id}')">Save changes</button>
   `);
@@ -2695,10 +2740,14 @@ async function saveInvoiceEdit(id){
       if(error){ toast('Save failed: '+error.message); return; } }
   } else {
     const hours=parseFloat(val('eiHours'))||0;
-    const prem =parseFloat(val('eiPrem'))||0;
-    if(hours<0||prem<0){ toast('Hours cannot be negative'); return; }
-    inv.hours=hours; inv.premiumHours=prem; inv.notes=notes;
-    if(ONLINE){ const { error } = await sb.from('invoices').update({hours,premium_hours:prem,notes}).eq('id',id);
+    if(hours<0){ toast('Hours cannot be negative'); return; }
+    const hasPremField=!!document.getElementById('eiPrem');
+    const prem = hasPremField ? (parseFloat(val('eiPrem'))||0) : null;
+    if(prem!=null && prem<0){ toast('Hours cannot be negative'); return; }
+    inv.hours=hours; inv.notes=notes;
+    const upd={hours,notes};
+    if(hasPremField){ inv.premiumHours=prem; upd.premium_hours=prem; }
+    if(ONLINE){ const { error } = await sb.from('invoices').update(upd).eq('id',id);
       if(error){ toast('Save failed: '+error.message); return; } }
   }
   closeSheet(); toast('Invoice updated ✓'); render();
