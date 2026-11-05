@@ -411,6 +411,9 @@ async function sbLoadAll(){
     client:s.client,address:s.address,jobDate:s.job_date,startTime:s.start_time,endTime:s.end_time,
     notes:s.notes,clockIn:s.clock_in,clockOut:s.clock_out}));
 
+  const sa = (await sb.from('service_areas').select('*').order('name')).data || [];
+  state.serviceAreas = sa.map(z=>({id:z.id,name:z.name}));
+
   const msgs = (await sb.from('messages').select('*').order('created_at')).data || [];
   if(isAdmin){
     const byC = {};
@@ -1018,7 +1021,53 @@ function openAdminMore(){
       ${svg(ICON.invoice)} &nbsp;Invoices${unpaid?` · ${unpaid} unpaid`:''}</button>
     <button class="btn ghost" style="width:100%;justify-content:flex-start;margin-top:10px" onclick="closeSheet();setAdminTab('leaderboard')">
       ${svg(ICON.trophy)} &nbsp;Review leaderboard</button>
+    <button class="btn ghost" style="width:100%;justify-content:flex-start;margin-top:10px" onclick="closeSheet();openServiceAreas()">
+      ${svg('<path d="M12 21s-6-5.686-6-10a6 6 0 1112 0c0 4.314-6 10-6 10z"/><circle cx="12" cy="11" r="2"/>')} &nbsp;Service areas</button>
   `);
+}
+function openServiceAreas(){
+  const areas=(state.serviceAreas&&state.serviceAreas.length)?state.serviceAreas:DEFAULT_ZONES.map(n=>({id:null,name:n}));
+  const seeded=!!(state.serviceAreas&&state.serviceAreas.length);
+  sheet(`
+    <button class="closex" onclick="closeSheet()">×</button>
+    <h3>Service areas</h3>
+    <div class="notice">These are the zones contractors pick in their availability, and the areas the address finder recognizes. Add or remove them here.${seeded?'':' <strong>Showing the default list — add one to start your own.</strong>'}</div>
+    <div style="margin-top:10px">
+      ${areas.map(z=>`<div class="spread" style="padding:7px 2px;border-bottom:1px solid var(--line);font-size:14px">
+        <span>${z.name}</span>
+        ${z.id?`<span onclick="removeServiceArea('${z.id}')" title="Remove" style="cursor:pointer;color:var(--red);font-weight:700">✕</span>`:`<span class="muted" style="font-size:11px">default</span>`}
+      </div>`).join('')}
+    </div>
+    <div class="row" style="gap:6px;margin-top:14px">
+      <input id="newArea" placeholder="e.g. Manotick" style="flex:1;margin:0" onkeydown="if(event.key==='Enter')addServiceArea()">
+      <button class="btn primary sm" onclick="addServiceArea()">+ Add</button>
+    </div>
+    ${seeded?'':`<button class="btn ghost sm" style="width:100%;margin-top:10px" onclick="seedServiceAreas()">Start from this default list</button>`}
+  `);
+}
+async function seedServiceAreas(){
+  if(!ONLINE){ toast('Needs the live app'); return; }
+  const rows=DEFAULT_ZONES.map(name=>({name}));
+  const { data, error } = await sb.from('service_areas').insert(rows).select();
+  if(error){ toast('Failed: '+error.message); return; }
+  state.serviceAreas=(data||[]).map(z=>({id:z.id,name:z.name})).sort((a,b)=>a.name.localeCompare(b.name));
+  toast('Default areas added ✓'); openServiceAreas();
+}
+async function addServiceArea(){
+  const name=(val('newArea')||'').trim();
+  if(!name){ toast('Type an area name'); return; }
+  if((state.serviceAreas||[]).some(z=>z.name.toLowerCase()===name.toLowerCase())){ toast('That area already exists'); return; }
+  if(!ONLINE){ toast('Needs the live app'); return; }
+  const { data, error } = await sb.from('service_areas').insert({name}).select().single();
+  if(error){ toast('Failed: '+error.message); return; }
+  state.serviceAreas=(state.serviceAreas||[]).concat([{id:data.id,name:data.name}]).sort((a,b)=>a.name.localeCompare(b.name));
+  toast('Area added ✓'); openServiceAreas();
+}
+async function removeServiceArea(id){
+  if(!confirm('Remove this service area? Contractors who selected it keep it on their profile until they edit.')) return;
+  if(ONLINE){ const { error } = await sb.from('service_areas').delete().eq('id',id); if(error){ toast('Failed: '+error.message); return; } }
+  state.serviceAreas=(state.serviceAreas||[]).filter(z=>z.id!==id);
+  toast('Area removed'); openServiceAreas();
 }
 
 function renderTabbar(){
@@ -1792,9 +1841,7 @@ function openAvail(){
     availSnapshot = clone(me.avail); availSnapshotZones = clone(me.zones);   // capture "before" once
   }
   const days=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
-  const allZones=['Westboro','Hintonburg','Kanata/Stittsville','Orleans','Vanier','Beacon Hill','Barrhaven',
-    'Riverside South','Centretown','The Glebe','Old Ottawa South','Nepean','Bells Corners','Downtown',
-    'Richmond','Rockland','Cumberland','Carleton Place','Kemptville','Findlay Creek','Greely'];
+  const allZones=zonesList();
   // migrate any older separate Kanata / Stittsville selections to the combined zone
   if(me.zones.includes('Kanata')||me.zones.includes('Stittsville')){
     me.zones = me.zones.filter(z=>z!=='Kanata'&&z!=='Stittsville');
@@ -2025,17 +2072,25 @@ function deleteOffer(id){
   if(ONLINE) sbDo(sb.from('assignments').delete().eq('id',id));
   toast('Assignment deleted'); render();
 }
-// map searchable terms in an address to a canonical service zone
-const ZONE_TERMS=[
-  ['kanata','Kanata/Stittsville'],['stittsville','Kanata/Stittsville'],
-  ['westboro','Westboro'],['hintonburg','Hintonburg'],['orleans','Orleans'],['orléans','Orleans'],
-  ['vanier','Vanier'],['beacon hill','Beacon Hill'],['barrhaven','Barrhaven'],
-  ['riverside south','Riverside South'],['centretown','Centretown'],['glebe','The Glebe'],
-  ['old ottawa south','Old Ottawa South'],['nepean','Nepean'],['bells corners','Bells Corners'],
-  ['downtown','Downtown'],['richmond','Richmond'],['rockland','Rockland'],['cumberland','Cumberland'],
-  ['carleton place','Carleton Place'],['kemptville','Kemptville'],
-  ['findlay creek','Findlay Creek'],['greely','Greely']
-];
+// service areas — admins manage these; falls back to defaults until loaded/seeded
+const DEFAULT_ZONES=['Westboro','Hintonburg','Kanata/Stittsville','Orleans','Vanier','Beacon Hill','Barrhaven',
+  'Riverside South','Centretown','The Glebe','Old Ottawa South','Nepean','Bells Corners','Downtown',
+  'Richmond','Rockland','Cumberland','Carleton Place','Kemptville','Findlay Creek','Greely'];
+function zonesList(){
+  return (state.serviceAreas && state.serviceAreas.length) ? state.serviceAreas.map(z=>z.name) : DEFAULT_ZONES.slice();
+}
+// build address-search terms from the live service-area list
+function zoneTerms(){
+  const terms=[];
+  zonesList().forEach(zone=>{
+    const low=zone.toLowerCase();
+    terms.push([low, zone]);
+    low.split('/').forEach(part=>{ const p=part.trim(); if(p && p!==low) terms.push([p, zone]); }); // e.g. kanata, stittsville
+    if(low.startsWith('the ')) terms.push([low.slice(4), zone]); // "The Glebe" → "glebe"
+  });
+  terms.push(['orléans','Orleans']);  // accented spelling
+  return terms;
+}
 function normZone(z){ z=(z||'').toLowerCase(); if(z==='kanata'||z==='stittsville') return 'kanata/stittsville'; return z; }
 function findByAddress(){
   const box=document.getElementById('addrFind'); if(!box) return;
@@ -2043,7 +2098,7 @@ function findByAddress(){
   const q=box.value.trim().toLowerCase();
   if(!q){ out.innerHTML=''; return; }
   const matched=new Set();
-  ZONE_TERMS.forEach(([term,zone])=>{ if(q.includes(term)) matched.add(zone); });
+  zoneTerms().forEach(([term,zone])=>{ if(term && q.includes(term)) matched.add(zone); });
   if(!matched.size){
     out.innerHTML=`<div class="muted" style="font-size:13px">No Ottawa area recognized yet — include a neighbourhood (e.g. Barrhaven, Kanata, Orleans).</div>`;
     return;
